@@ -1,0 +1,52 @@
+library:
+  source-dirs: src
+tests:
+  semt-test:
+    source-dirs: test
+    main: Spec.hs
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - semt
+
+copyright: Copyright (c) Maciej Buszka
+
+maintainer: maciej@buszka.eu
+
+dependencies:
+  - containers
+  - base >= 4.7 && < 5
+  - megaparsec
+  - parser-combinators
+  - optparse-applicative
+  - bound
+  - transformers
+  - mtl
+
+name: semt
+
+version: 0.1.0.0
+
+extra-source-files:
+  - README.md
+  - ChangeLog.md
+
+author: Maciej Buszka
+
+github: mbuszka/semt
+
+license: BSD3
+
+executables:
+  semt-exe:
+    source-dirs: app
+    main: Main.hs
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - semt
+description: Please see the README on GitHub at <https://github.com/mbuszka/semt#readme>
