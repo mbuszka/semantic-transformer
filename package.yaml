@@ -24,6 +24,7 @@ dependencies:
   - bound
   - transformers
   - mtl
+  - prettyprinter
 
 name: semt
 

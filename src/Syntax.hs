@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 
 module Syntax where
 
@@ -8,149 +8,146 @@ import qualified Data.List.NonEmpty            as NE
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.Map                      as Map
 import           Data.Map                       ( Map )
+import qualified Data.List                     as List
 import qualified Data.Set                      as Set
 import           Data.Set                       ( Set )
+import           Data.Text.Prettyprint.Doc
 import           Data.Maybe
+import           Bind
+
+newtype Cons = MkCons String deriving Eq
+
+instance Pretty Cons where
+  pretty (MkCons s) = pretty s
+
+type Bind a = Scope Int Expr a
 
 data Expr a
-  = Lambda (NonEmpty a) (Expr a)
-  | App (Expr a) (NonEmpty (Expr a))
-  | Case (Expr a) [CaseExpr a] (Maybe (Expr a))
-  | AppConstructor String [Expr a]
-  | Var a
+  = Var a
   | Const Const
   | Err String
-  deriving Show
+  | Lambda (NonEmpty String) (Bind a)
+  | App (Expr a) (NonEmpty (Expr a))
+  | Case (Expr a) [Pattern Expr a]
+  deriving (Functor, Foldable, Traversable)
 
-data CaseExpr a = CaseExpr String [a] (Expr a)
-  deriving Show
+instance Applicative Expr where
+  pure  = Var
+
+  (<*>) = ap
+
+
+instance Monad Expr where
+  Var   a      >>= k = k a
+  Const c      >>= _ = Const c
+  Err   s      >>= _ = Err s
+  Lambda as b  >>= k = Lambda as (subst k b)
+  App    f  xs >>= k = App (f >>= k) (fmap (>>= k) xs)
+  Case e ps >>= k = Case (e >>= k) (fmap (subst k) ps)
+
+instance Pretty a => Pretty (Expr a) where
+  pretty = prettyExpr NoParens . fmap pretty
+
+
+data Pattern f a
+  = PatConst Const (f a)
+  | PatCons Cons (NonEmpty String) (Scope Int f a)
+  | PatWild (f a)
+  deriving (Functor, Foldable, Traversable)
+
+instance Subst Pattern where
+  subst k (PatConst c e  ) = PatConst c (e >>= k)
+  subst k (PatCons t ns s) = PatCons t ns (subst k s)
+  subst k (PatWild e     ) = PatWild (e >>= k)
+
+prettyPat :: Pattern Expr (Doc ann) -> Doc ann
+prettyPat (PatConst c e) =
+  pretty "|" <+> pretty c <+> pretty "->" <+> prettyExpr NoParens e
+prettyPat (PatCons t ns b) =
+  let ns' = NE.toList (fmap pretty ns)
+  in  pretty "|" <+> pretty t <+> hsep ns' <+> pretty "->" <+> prettyExpr
+        NoParens
+        (instantiate (Var . (ns' !!)) b)
+prettyPat (PatWild e) =
+  pretty "|" <+> pretty "_" <+> pretty "->" <+> prettyExpr NoParens e
+
+prettyExpr :: Parenthesise -> Expr (Doc ann) -> Doc ann
+prettyExpr _ (Var   v) = v
+prettyExpr _ (Const c) = pretty c
+prettyExpr p (Err   e) = parenApp p $ pretty "err" <+> pretty (String e)
+prettyExpr p (Lambda names bind) =
+  parenLam p
+    $   pretty "fun"
+    <+> (sep . fmap pretty . NE.toList) names
+    <+> pretty "->"
+    <+> nest 2 (prettyExpr NoParens (putNames names bind))
+prettyExpr p (App f xs) = parenApp p $ prettyExpr ParenAll f <+> prettyApp xs
+prettyExpr p (Case e ps) =
+  parenLam p $ pretty "match" <+> prettyExpr NoParens e <+> nest
+    0
+    (sep . fmap prettyPat $ ps)
+
+prettyApp (x      :| []) = prettyExpr ParenApp x
+prettyApp (x :| y :  ys) = prettyExpr ParenAll x <+> prettyApp (y :| ys)
+
+data Parenthesise = NoParens | ParenApp | ParenAll
+
+prettyParens x = pretty "(" <> x <> pretty ")"
+
+parenApp NoParens = id
+parenApp _        = prettyParens
+
+parenLam ParenAll = prettyParens
+parenLam _        = id
+
+putNames :: NonEmpty String -> Bind (Doc ann) -> Expr (Doc ann)
+putNames names = instantiate (fmap (Var . pretty) names NE.!!)
+
+
+
+-- data CaseExpr a = CaseExpr String [a] (Expr a)
+--   deriving (Functor, Show)
 
 data TopLevel a
-  = DefFun a (NonEmpty a) (Expr a)
-  deriving Show
-  -- | DefData String (NonEmpty DefConstructor)
+  = DefFun a (NonEmpty String) (Bind a)
+  deriving (Functor)
+
+prettyTopLevel :: TopLevel (Doc a) -> Doc a
+prettyTopLevel (DefFun name args bind) =
+  pretty "def"
+    <+> name
+    <+> (sep . fmap pretty . NE.toList) args
+    <+> pretty "->"
+    <+> prettyExpr NoParens (putNames args bind)
+
+instance Pretty a => Pretty (TopLevel a) where
+  pretty t = prettyTopLevel $ fmap pretty t
+
 
 -- data DefConstructor = DefConstructor String [String]
 
-data Const = IConst Int | SConst String
-  deriving Show
+data Const = Int Int | String String | Cons Cons
+  deriving Eq
 
-type Env = Map String Value
+instance Show Const where
+  show (Int i) = show i
+  show (String s) = show s
+  show (Cons (MkCons c)) = c
 
-data Value
-  = Closure (NonEmpty String) (Expr String) Env
-  | I Int
-  | S String
-  | Constructor String [Value]
+instance Pretty Const where
+  pretty (Int    x) = pretty x
+  pretty (String x) = pretty x
+  pretty (Cons   c) = pretty c
 
-instance Show Value where
-  show (Closure args body _  ) = "<closure>"
-  show (I x                  ) = show x
-  show (S s                  ) = show s
-  show (Constructor name vals) = "(" ++ name ++ " " ++ show vals ++ ")"
+elemIndex :: Eq a => NonEmpty a -> a -> Maybe Int
+elemIndex (x :| xs) y | x == y    = Just 0
+                      | otherwise = (+ 1) <$> List.elemIndex x xs
 
-type Cont = Value -> Value
+bind :: NonEmpty String -> Expr String -> Bind String
+bind args = abstract (elemIndex args)
 
-nonEmptyToSet :: NonEmpty String -> Set String
-nonEmptyToSet = Set.fromList . NE.toList
+bindL :: [String] -> Expr String -> Bind String
+bindL args = abstract (`List.elemIndex` args)
 
-freeVars :: Ord a => Expr a -> Set a
-freeVars (Lambda bound expr) =
-  Set.difference (freeVars expr) (Set.fromList $ NE.toList bound)
-freeVars (Case expr branches def) =
-  freeVars expr
-    `Set.union` foldMap freeVarsCase branches
-    `Set.union` maybe Set.empty freeVars def
-freeVars (App f exprs) = freeVars f `Set.union` foldMap freeVars exprs
-freeVars (Var v      ) = Set.singleton v
-freeVars _             = Set.empty
-
-freeVarsCase :: Ord a => CaseExpr a -> Set a
-freeVarsCase (CaseExpr _ bound expr) =
-  freeVars expr `Set.difference` Set.fromList bound
-
-eval :: Env -> Expr String -> Cont -> Value
-eval env expr k = trace ("eval " ++ show expr) $ case expr of
-  Lambda bound body -> k $ Closure bound body (Map.restrictKeys env fvs)
-  App    f     args -> eval env f $ \case
-    Closure params body boundEnv ->
-      trace "closure cont" $ if length params == length args
-        then evalArgs
-          env
-          (NE.toList args)
-          []
-          (\vs ->
-            let env' = Map.union (Map.fromList $ NE.toList params `zip` vs)
-                                 boundEnv
-            in  eval env' body k
-          )
-        else error "Wrong argument count"
-  AppConstructor name args ->
-    evalArgs env args [] $ \vs -> k $ Constructor name vs
-  Case e branches def -> eval env e (\v -> evalCase env branches def v k)
-  Var   v             -> k $ env Map.! v
-  Const (IConst i)    -> k $ I i
-  Const (SConst s)    -> k $ S s
-  Err   msg           -> error msg
-  where fvs = freeVars expr
-
-evalArgs :: Env -> [Expr String] -> [Value] -> ([Value] -> Value) -> Value
-evalArgs env [] vals k = k $ reverse vals
-evalArgs env (e : exprs) vals k =
-  eval env e (\v -> evalArgs env exprs (v : vals) k)
-
-evalCase
-  :: Env -> [CaseExpr String] -> Maybe (Expr String) -> Value -> Cont -> Value
-evalCase env [] Nothing  v k = error "No branch in case"
-evalCase env [] (Just e) _ k = eval env e k
-evalCase env ((CaseExpr name bound e) : es) def (Constructor cname vals) k
-  | name == cname = if length bound == length vals
-    then
-      let env' = Map.fromList (zip bound vals) `Map.union` env in eval env' e k
-    else error $ "Wrong variable count: " ++ show (length bound)
-evalCase env (_ : es) def v k = evalCase env es def v k
-
-buildEnv :: [TopLevel String] -> Env
-buildEnv ts = let e = aux e Map.empty ts in e
- where
-  aux fin e [] = e
-  aux fin e ((DefFun name args body) : es) =
-    aux fin (Map.insert name (Closure args body fin) e) es
-
-
-getVar :: State Int Int
-getVar = do
-  x <- get
-  modify' (+ 1)
-  return x
-
-
-mkCont :: Int -> Expr (Either String Int) -> Expr (Either String Int)
-mkCont x = Lambda (Right x :| [])
-
-cpsTransform
-  :: Expr (Either String Int)
-  -> Expr String
-  -> State Int (Expr (Either String Int))
-cpsTransform k (Var   s         ) = pure $ App k (Var (Left s) :| [])
-cpsTransform k (Const c         ) = pure $ App k (Const c :| [])
-cpsTransform k (Err   s         ) = pure $ App k (Err s :| [])
-cpsTransform k (Lambda args body) = do
-  x     <- getVar
-  body' <- cpsTransform (Var $ Right x) body
-  return $ App k (Lambda (fmap Left args <> (Right x :| [])) body' :| [])
-cpsTranform k (App f args) = do
-  x    <- getVar
-  vars <- traverse (const getVar) args
-  let fin = App (Var $ Right x) (fmap (Var . Right) vars <> (k :| []))
-  k' <- buildArgs fin (NE.toList $ NE.zip vars args)
-  cpsTransform k' f
- where
-  buildArgs
-    :: Expr (Either String Int)
-    -> [(Int, Expr String)]
-    -> State Int (Expr (Either String Int))
-  buildArgs fin []            = return fin
-  buildArgs fin ((x, e) : es) = do
-    k <- mkCont x <$> buildArgs fin es
-    cpsTransform k e
+unbind :: NonEmpty String -> Bind String -> Expr String
+unbind xs = instantiate (Var . (xs NE.!!))
