@@ -3,8 +3,19 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE RankNTypes #-}
 
-module Syntax where
+module Syntax
+  ( Cons(..)
+  , Const(..)
+  , Expr(..)
+  , Pattern(..)
+  , TopLevel(..)
+  , bind
+  , mapPattern
+  , unbind
+  )
+where
 
 import           Bind
 import           Control.Monad.State
@@ -23,6 +34,35 @@ newtype Cons = MkCons String deriving (Eq, Show)
 
 instance Pretty Cons where
   pretty (MkCons s) = pretty s
+
+
+data Const = Int Int | String String | Cons Cons
+  deriving (Eq)
+
+instance Show Const where
+  show (Int    i         ) = show i
+  show (String s         ) = show s
+  show (Cons   (MkCons c)) = c
+
+instance Pretty Const where
+  pretty (Int    x) = pretty x
+  pretty (String x) = pretty x
+  pretty (Cons   c) = pretty c
+
+
+data Pattern f a
+  = PatConst Const (f a)
+  | PatCons Cons (NonEmpty String) (Scope Int f a)
+  | PatWild (f a)
+  deriving (Functor, Foldable, Traversable)
+
+deriving instance (Show (f a), Show (f (Var Int a))) => Show (Pattern f a)
+
+instance Subst Pattern where
+  subst k (PatConst c e  ) = PatConst c (e >>= k)
+  subst k (PatCons t ns s) = PatCons t ns (subst k s)
+  subst k (PatWild e     ) = PatWild (e >>= k)
+
 
 type Bind a = Scope Int Expr a
 
@@ -54,18 +94,28 @@ instance Monad Expr where
 instance Pretty a => Pretty (Expr a) where
   pretty = prettyExpr NoParens . fmap pretty
 
-data Pattern f a
-  = PatConst Const (f a)
-  | PatCons Cons (NonEmpty String) (Scope Int f a)
-  | PatWild (f a)
-  deriving (Functor, Foldable, Traversable)
 
-deriving instance (Show (f a), Show (f (Var Int a))) => Show (Pattern f a)
+data TopLevel a = DefFun a (NonEmpty String) (Bind a)
+  deriving (Functor)
 
-instance Subst Pattern where
-  subst k (PatConst c e  ) = PatConst c (e >>= k)
-  subst k (PatCons t ns s) = PatCons t ns (subst k s)
-  subst k (PatWild e     ) = PatWild (e >>= k)
+instance Pretty a => Pretty (TopLevel a) where
+  pretty t = prettyTopLevel $ fmap pretty t
+
+-- Exported Functions --
+
+bind :: NonEmpty String -> Expr String -> Bind String
+bind args = abstract (elemIndex args)
+
+unbind :: NonEmpty String -> Bind String -> Expr String
+unbind xs = instantiate (Var . (xs NE.!!))
+
+mapPattern :: (forall a . f a -> f a) -> Pattern f a -> Pattern f a
+mapPattern f (PatWild e             ) = PatWild (f e)
+mapPattern f (PatConst c e          ) = PatConst c (f e)
+mapPattern f (PatCons t ns (Scope e)) = PatCons t ns (Scope (f e))
+
+
+-- Pretty Printing Helpers --
 
 prettyPat :: Pattern Expr (Doc ann) -> Doc ann
 prettyPat (PatConst c e) =
@@ -111,10 +161,6 @@ parenLam _        = id
 putNames :: NonEmpty String -> Bind (Doc ann) -> Expr (Doc ann)
 putNames names = instantiate (fmap (Var . pretty) names NE.!!)
 
-data TopLevel a
-  = DefFun a (NonEmpty String) (Bind a)
-  deriving (Functor)
-
 prettyTopLevel :: TopLevel (Doc a) -> Doc a
 prettyTopLevel (DefFun name args bind) =
   pretty "def"
@@ -123,30 +169,6 @@ prettyTopLevel (DefFun name args bind) =
     <+> pretty "->"
     <+> prettyExpr NoParens (putNames args bind)
 
-instance Pretty a => Pretty (TopLevel a) where
-  pretty t = prettyTopLevel $ fmap pretty t
-
--- data DefConstructor = DefConstructor String [String]
-
-data Const = Int Int | String String | Cons Cons
-  deriving (Eq)
-
-instance Show Const where
-  show (Int    i         ) = show i
-  show (String s         ) = show s
-  show (Cons   (MkCons c)) = c
-
-instance Pretty Const where
-  pretty (Int    x) = pretty x
-  pretty (String x) = pretty x
-  pretty (Cons   c) = pretty c
-
 elemIndex :: Eq a => NonEmpty a -> a -> Maybe Int
 elemIndex (x :| xs) y | x == y    = Just 0
                       | otherwise = (+ 1) <$> List.elemIndex x xs
-
-bind :: NonEmpty String -> Expr String -> Bind String
-bind args = abstract (elemIndex args)
-
-unbind :: NonEmpty String -> Bind String -> Expr String
-unbind xs = instantiate (Var . (xs NE.!!))
