@@ -1,4 +1,8 @@
-{-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveTraversable #-}
 
 module Syntax where
 
@@ -15,7 +19,7 @@ import           Data.Text.Prettyprint.Doc
 import           Data.Maybe
 import           Bind
 
-newtype Cons = MkCons String deriving Eq
+newtype Cons = MkCons String deriving (Eq, Show)
 
 instance Pretty Cons where
   pretty (MkCons s) = pretty s
@@ -28,8 +32,11 @@ data Expr a
   | Err String
   | Lambda (NonEmpty String) (Bind a)
   | App (Expr a) (NonEmpty (Expr a))
+  | CApp Cons (NonEmpty (Expr a))
   | Case (Expr a) [Pattern Expr a]
   deriving (Functor, Foldable, Traversable)
+
+deriving instance Show a => Show (Expr a)
 
 instance Applicative Expr where
   pure  = Var
@@ -43,7 +50,8 @@ instance Monad Expr where
   Err   s      >>= _ = Err s
   Lambda as b  >>= k = Lambda as (subst k b)
   App    f  xs >>= k = App (f >>= k) (fmap (>>= k) xs)
-  Case e ps >>= k = Case (e >>= k) (fmap (subst k) ps)
+  CApp   c  xs >>= k = CApp c (fmap (>>= k) xs)
+  Case   e  ps >>= k = Case (e >>= k) (fmap (subst k) ps)
 
 instance Pretty a => Pretty (Expr a) where
   pretty = prettyExpr NoParens . fmap pretty
@@ -54,6 +62,8 @@ data Pattern f a
   | PatCons Cons (NonEmpty String) (Scope Int f a)
   | PatWild (f a)
   deriving (Functor, Foldable, Traversable)
+
+deriving instance (Show (f a), Show (f (Var Int a))) => Show (Pattern f a)
 
 instance Subst Pattern where
   subst k (PatConst c e  ) = PatConst c (e >>= k)
@@ -81,7 +91,8 @@ prettyExpr p (Lambda names bind) =
     <+> (sep . fmap pretty . NE.toList) names
     <+> pretty "->"
     <+> nest 2 (prettyExpr NoParens (putNames names bind))
-prettyExpr p (App f xs) = parenApp p $ prettyExpr ParenAll f <+> prettyApp xs
+prettyExpr p (App  f xs) = parenApp p $ prettyExpr ParenAll f <+> prettyApp xs
+prettyExpr p (CApp c xs) = parenApp p $ pretty c <+> prettyApp xs
 prettyExpr p (Case e ps) =
   parenLam p $ pretty "match" <+> prettyExpr NoParens e <+> nest
     0
@@ -103,11 +114,6 @@ parenLam _        = id
 putNames :: NonEmpty String -> Bind (Doc ann) -> Expr (Doc ann)
 putNames names = instantiate (fmap (Var . pretty) names NE.!!)
 
-
-
--- data CaseExpr a = CaseExpr String [a] (Expr a)
---   deriving (Functor, Show)
-
 data TopLevel a
   = DefFun a (NonEmpty String) (Bind a)
   deriving (Functor)
@@ -127,12 +133,12 @@ instance Pretty a => Pretty (TopLevel a) where
 -- data DefConstructor = DefConstructor String [String]
 
 data Const = Int Int | String String | Cons Cons
-  deriving Eq
+  deriving (Eq)
 
 instance Show Const where
-  show (Int i) = show i
-  show (String s) = show s
-  show (Cons (MkCons c)) = c
+  show (Int    i         ) = show i
+  show (String s         ) = show s
+  show (Cons   (MkCons c)) = c
 
 instance Pretty Const where
   pretty (Int    x) = pretty x
@@ -145,9 +151,6 @@ elemIndex (x :| xs) y | x == y    = Just 0
 
 bind :: NonEmpty String -> Expr String -> Bind String
 bind args = abstract (elemIndex args)
-
-bindL :: [String] -> Expr String -> Bind String
-bindL args = abstract (`List.elemIndex` args)
 
 unbind :: NonEmpty String -> Bind String -> Expr String
 unbind xs = instantiate (Var . (xs NE.!!))

@@ -60,14 +60,12 @@ topLevel = keyword "def" >> do
 stringLiteral :: Parser String
 stringLiteral = char '\"' *> manyTill L.charLiteral (char '\"')
 
--- caseExpr :: Parser (CaseExpr String)
--- caseExpr = parens $ parens (CaseExpr <$> cIdent <*> many ident) <*> expr
-
 expr :: Parser (Expr String)
 expr = fmap
   (\case
-    x      :| [] -> x
-    x :| y :  ys -> App x (y :| ys)
+    x                :| []       -> x
+    (Const (Cons c)) :| (y : ys) -> CApp c (y :| ys)
+    x                :| (y : ys) -> App x (y :| ys)
   )
   exprs
 
@@ -90,7 +88,6 @@ atom = choice
 
 match :: Parser (Expr String)
 match = keyword "match" >> (Case <$> expr <*> many Parser.pattern)
-
 
 pattern :: Parser (Pattern Expr String)
 pattern = symbol "|" >> choice

@@ -25,6 +25,7 @@ dependencies:
   - transformers
   - mtl
   - prettyprinter
+  - uniplate
 
 name: semt
 

@@ -1,5 +1,6 @@
-{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE DeriveTraversable, StandaloneDeriving, UndecidableInstances #-}
 {-# LANGUAGE DeriveFunctor #-}
+
 
 module Bind where
 
@@ -13,6 +14,9 @@ instance Bifunctor Var where
   bimap _ g (F a) = F (g a)
 
 newtype Scope b f a = Scope { unscope :: f (Var b a) }
+
+deriving instance Show (f (Var b a)) => Show (Scope b f a)
+
 
 class Subst t where
   subst :: Monad f => (a -> f b) -> t f a -> t f b
