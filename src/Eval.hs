@@ -1,17 +1,18 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE LambdaCase #-}
+
 module Eval where
 
-import           Debug.Trace
-import           Data.Map                       ( Map )
-import qualified Data.Map                      as Map
+import           Bind
+import           Data.Foldable
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.List.NonEmpty            as NE
+import           Data.Map                       ( Map )
+import qualified Data.Map                      as Map
 import qualified Data.Set                      as Set
-import           Data.Foldable
-import           Bind
-import           Syntax
 import           Data.Text.Prettyprint.Doc      ( pretty )
+import           Debug.Trace
+import           Syntax
 
 type Env = Map String Value
 
@@ -49,7 +50,7 @@ eval env expr k = case expr of
     PrimOp op -> evalArgs env args [] (k . op)
     other     -> error $ show other
   Case e ps -> eval env e \v -> evalCase env v ps k
-  CApp c xs -> evalArgs env xs [] (\vs -> k $ Struct c vs)
+  CApp c xs -> evalArgs env xs [] \vs -> k $ Struct c vs
   Var   v   -> k $ env Map.! v
   Const c   -> k $ VConst c
   Err   msg -> error msg
@@ -95,7 +96,7 @@ initial = Map.fromList
   , ( "streq"
     , PrimOp $ \case
       VConst (String a) :| [VConst (String b)] ->
-        VConst (Cons (MkCons $ if a == b then "True" else "False"))
+        VConst (Cons (MkCons if a == b then "True" else "False"))
     )
   ]
 

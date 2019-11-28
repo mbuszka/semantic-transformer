@@ -3,16 +3,16 @@ module Main where
 import           Options.Applicative
 import           Parser
 import           Syntax
-import Eval
-import Transform.Cps
-import Bind
+import           Eval
+import           Transform.Cps
+import           Bind
 import           Control.Monad.State.Lazy
 import           Data.Bifunctor
 import           Data.Text.Prettyprint.Doc      ( pretty
                                                 , vsep
                                                 )
 
-import Data.List.NonEmpty (NonEmpty(..))
+import           Data.List.NonEmpty             ( NonEmpty(..) )
 
 data Repl = Repl { file :: String }
 
@@ -51,7 +51,9 @@ step env cpsEnv = do
     Right expr -> do
       putStrLn "echo"
       print $ pretty expr
-      let cps  = simplify $ evalState (cpsTransform (Lambda ("x" :| []) (Scope (Var . B $ 0))) expr) 0
+      let cps = simplify $ evalState
+            (cpsTransform (Lambda ("x" :| []) (Scope (Var . B $ 0))) expr)
+            0
       let res = eval env expr id
       print res
       putStrLn "cps"

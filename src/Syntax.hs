@@ -1,23 +1,23 @@
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveFoldable #-}
-{-# LANGUAGE DeriveTraversable #-}
 
 module Syntax where
 
+import           Bind
 import           Control.Monad.State
-import           Debug.Trace
+import qualified Data.List                     as List
 import qualified Data.List.NonEmpty            as NE
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.Map                      as Map
 import           Data.Map                       ( Map )
-import qualified Data.List                     as List
+import           Data.Maybe
 import qualified Data.Set                      as Set
 import           Data.Set                       ( Set )
 import           Data.Text.Prettyprint.Doc
-import           Data.Maybe
-import           Bind
+import           Debug.Trace
 
 newtype Cons = MkCons String deriving (Eq, Show)
 
@@ -40,9 +40,7 @@ deriving instance Show a => Show (Expr a)
 
 instance Applicative Expr where
   pure  = Var
-
   (<*>) = ap
-
 
 instance Monad Expr where
   Var   a      >>= k = k a
@@ -55,7 +53,6 @@ instance Monad Expr where
 
 instance Pretty a => Pretty (Expr a) where
   pretty = prettyExpr NoParens . fmap pretty
-
 
 data Pattern f a
   = PatConst Const (f a)
@@ -128,7 +125,6 @@ prettyTopLevel (DefFun name args bind) =
 
 instance Pretty a => Pretty (TopLevel a) where
   pretty t = prettyTopLevel $ fmap pretty t
-
 
 -- data DefConstructor = DefConstructor String [String]
 

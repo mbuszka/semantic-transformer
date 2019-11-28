@@ -6,21 +6,20 @@ module Parser
   )
 where
 
-import           Control.Applicative     hiding ( many
+import           Control.Applicative     hiding ( Const
+                                                , many
                                                 , some
-                                                , Const
                                                 )
 import           Control.Monad
 import qualified Control.Monad.Combinators.NonEmpty
                                                as NE
-import           Data.List.NonEmpty             ( NonEmpty(..) )
 import           Data.Bifunctor
+import           Data.List.NonEmpty             ( NonEmpty(..) )
 import           Data.Void
+import           Syntax
 import           Text.Megaparsec
 import           Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer    as L
-
-import           Syntax
 
 type Parser a = Parsec Void String a
 
@@ -68,7 +67,6 @@ expr = fmap
     x                :| (y : ys) -> App x (y :| ys)
   )
   exprs
-
 
 exprs :: Parser (NonEmpty (Expr String))
 exprs = NE.some atom

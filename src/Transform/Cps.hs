@@ -2,14 +2,14 @@
 
 module Transform.Cps where
 
-import           Control.Monad.State
-import           Syntax
 import           Bind
-import           Eval
+import           Control.Monad.State
 import           Data.Bifunctor
 import qualified Data.List.NonEmpty            as NE
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.Map                      as Map
+import           Eval
+import           Syntax
 
 singleton :: a -> NonEmpty a
 singleton x = x :| []

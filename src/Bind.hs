@@ -1,10 +1,11 @@
-{-# LANGUAGE DeriveTraversable, StandaloneDeriving, UndecidableInstances #-}
 {-# LANGUAGE DeriveFunctor #-}
-
+{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Bind where
 
-import Data.Bifunctor
+import           Data.Bifunctor
 
 data Var b a = B b | F a
   deriving (Eq, Show, Ord, Functor, Traversable, Foldable)
@@ -13,10 +14,9 @@ instance Bifunctor Var where
   bimap f _ (B b) = B (f b)
   bimap _ g (F a) = F (g a)
 
-newtype Scope b f a = Scope { unscope :: f (Var b a) }
+newtype Scope b f a = Scope {unscope :: f (Var b a)}
 
 deriving instance Show (f (Var b a)) => Show (Scope b f a)
-
 
 class Subst t where
   subst :: Monad f => (a -> f b) -> t f a -> t f b
@@ -46,7 +46,7 @@ abstract :: Monad f => (a -> Maybe b) -> f a -> Scope b f a
 abstract k t = Scope $ fmap k' t
  where
   k' x = case k x of
-    Just b -> B b
+    Just b  -> B b
     Nothing -> F x
 
 weaken :: Functor f => f a -> f (Var b a)
