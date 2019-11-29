@@ -14,6 +14,8 @@ module Syntax
   , bind
   , mapPattern
   , unbind
+  , pprint
+  , pprintLn
   )
 where
 
@@ -28,6 +30,8 @@ import           Data.Maybe
 import qualified Data.Set                      as Set
 import           Data.Set                       ( Set )
 import           Data.Text.Prettyprint.Doc
+import           Data.Text.Prettyprint.Doc.Render.String
+                                                ( renderString )
 import           Debug.Trace
 
 newtype Cons = MkCons String deriving (Eq, Show)
@@ -46,7 +50,7 @@ instance Show Const where
 
 instance Pretty Const where
   pretty (Int    x) = pretty x
-  pretty (String x) = pretty x
+  pretty (String x) = pretty (show x)
   pretty (Cons   c) = pretty c
 
 
@@ -103,10 +107,10 @@ instance Pretty a => Pretty (TopLevel a) where
 
 -- Exported Functions --
 
-bind :: NonEmpty String -> Expr String -> Bind String
+bind :: Eq a => NonEmpty a -> Expr a -> Bind a
 bind args = abstract (elemIndex args)
 
-unbind :: NonEmpty String -> Bind String -> Expr String
+unbind :: NonEmpty a -> Bind a -> Expr a
 unbind xs = instantiate (Var . (xs NE.!!))
 
 mapPattern :: (forall a . f a -> f a) -> Pattern f a -> Pattern f a
@@ -121,10 +125,12 @@ prettyPat :: Pattern Expr (Doc ann) -> Doc ann
 prettyPat (PatConst c e) =
   pretty "|" <+> pretty c <+> pretty "->" <+> prettyExpr NoParens e
 prettyPat (PatCons t ns b) =
-  let ns' = NE.toList (fmap pretty ns)
-  in  pretty "|" <+> pretty t <+> hsep ns' <+> pretty "->" <+> prettyExpr
-        NoParens
-        (instantiate (Var . (ns' !!)) b)
+  let ns' = fmap pretty ns
+  in  pretty "|"
+        <+> pretty t
+        <+> hsep (NE.toList ns')
+        <+> pretty "->"
+        <+> prettyExpr NoParens (unbind ns' b)
 prettyPat (PatWild e) =
   pretty "|" <+> pretty "_" <+> pretty "->" <+> prettyExpr NoParens e
 
@@ -135,27 +141,24 @@ prettyExpr p (Err   e) = parenApp p $ pretty "err" <+> pretty (String e)
 prettyExpr p (Lambda names bind) =
   parenLam p
     $   pretty "fun"
-    <+> (sep . fmap pretty . NE.toList) names
+    <+> (hsep . fmap pretty . NE.toList) names
     <+> pretty "->"
-    <+> nest 2 (prettyExpr NoParens (putNames names bind))
+    <+> block (prettyExpr NoParens (putNames names bind))
 prettyExpr p (App  f xs) = parenApp p $ prettyExpr ParenAll f <+> prettyApp xs
 prettyExpr p (CApp c xs) = parenApp p $ pretty c <+> prettyApp xs
 prettyExpr p (Case e ps) =
-  parenLam p $ pretty "match" <+> prettyExpr NoParens e <+> nest
-    0
-    (sep . fmap prettyPat $ ps)
+  parenLam p $ pretty "match" <+> prettyExpr NoParens e <> hardline <> vsep ps'
+  where ps' = fmap prettyPat ps
 
 prettyApp (x      :| []) = prettyExpr ParenApp x
 prettyApp (x :| y :  ys) = prettyExpr ParenAll x <+> prettyApp (y :| ys)
 
 data Parenthesise = NoParens | ParenApp | ParenAll
 
-prettyParens x = pretty "(" <> x <> pretty ")"
-
 parenApp NoParens = id
-parenApp _        = prettyParens
+parenApp _        = parens
 
-parenLam ParenAll = prettyParens
+parenLam ParenAll = parens
 parenLam _        = id
 
 putNames :: NonEmpty String -> Bind (Doc ann) -> Expr (Doc ann)
@@ -165,10 +168,19 @@ prettyTopLevel :: TopLevel (Doc a) -> Doc a
 prettyTopLevel (DefFun name args bind) =
   pretty "def"
     <+> name
-    <+> (sep . fmap pretty . NE.toList) args
+    <+> (hsep . fmap pretty . NE.toList) args
     <+> pretty "->"
-    <+> prettyExpr NoParens (putNames args bind)
+    <+> block (prettyExpr NoParens (putNames args bind))
 
 elemIndex :: Eq a => NonEmpty a -> a -> Maybe Int
 elemIndex (x :| xs) y | x == y    = Just 0
                       | otherwise = (+ 1) <$> List.elemIndex x xs
+
+block :: Doc ann -> Doc ann
+block x = flatAlt x (nest 2 $ hardline <> x)
+
+pprint :: Pretty a => a -> String
+pprint = renderString . layoutSmart defaultLayoutOptions . pretty
+
+pprintLn :: Pretty a => a -> IO ()
+pprintLn = putStrLn . pprint

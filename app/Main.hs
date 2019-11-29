@@ -34,10 +34,10 @@ main = do
     Left  err  -> putStrLn err
     Right defs -> do
       putStrLn "Loaded definitions:"
-      print $ vsep (map pretty defs)
+      mapM_ (\x -> pprintLn x >> putChar '\n') defs
       putStrLn "\nCps transformed"
       let cpsDefs = map Cps.top defs
-      print $ vsep (map pretty cpsDefs)
+      mapM_ (\x -> pprintLn x >> putChar '\n') cpsDefs
       putStrLn "Awaiting input"
       step (buildEnv initial defs) (buildEnv (Cps.env initial) cpsDefs)
 
@@ -50,11 +50,11 @@ step env cpsEnv = do
     Left  err  -> putStrLn err
     Right expr -> do
       putStrLn "echo"
-      print $ pretty expr
+      putStrLn . pprint $ expr
       let cps = Cps.repl expr
       let res = eval env expr id
       print res
       putStrLn "cps"
-      print $ pretty cps
+      putStrLn . pprint $ cps
       print $ eval cpsEnv cps id
       step env cpsEnv
