@@ -57,7 +57,7 @@ topLevel = keyword "def" >> do
   return $ DefFun name args body
 
 stringLiteral :: Parser String
-stringLiteral = char '\"' *> manyTill L.charLiteral (char '\"')
+stringLiteral = lexeme $ char '\"' *> manyTill L.charLiteral (char '\"')
 
 expr :: Parser (Expr String)
 expr = fmap
