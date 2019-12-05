@@ -6,3 +6,5 @@ def fib n -> match n
   | 0 -> 1
   | 1 -> 1
   | _ -> add (fib (sub n 1)) (fib (sub n 2))
+
+def ignore x -> 42

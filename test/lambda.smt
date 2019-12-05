@@ -9,3 +9,7 @@ def eval env term ->
   | Lam x body ->
     fun v -> eval (extend env x v) body
   | App f x -> (eval env f) (eval env x)
+  | Unit -> Unit
+
+def main term ->
+  eval (fun x -> err "empty env") term
