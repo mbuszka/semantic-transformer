@@ -32,7 +32,9 @@ env = fmap f
     (\xs ->
       let ys                    = NE.fromList $ NE.init xs
           Closure (k :| []) b e = NE.last xs
-      in  (eval (Map.insert k (p ys) e) b id)
+      in  do
+        r <- p ys
+        eval (Map.insert k r e) b pure
     )
 
 
@@ -127,14 +129,3 @@ cpsTop (DefFun n args (Scope b)) = do
   kname <- fresh
   b'    <- cpsTransform (Var (B (length args))) b
   return $ DefFun n (append args kname) (Scope b')
-
-isTrivial :: Expr a -> Bool
-isTrivial Var{}       = True
-isTrivial Const{}     = True
-isTrivial Lambda{}    = True
-isTrivial (CApp _ xs) = all isTrivial xs
-isTrivial _           = False
-
-isCps :: Expr a -> Bool
-isCps (App f xs) = isTrivial f && all isTrivial xs
-isCps e          = isTrivial e

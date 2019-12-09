@@ -42,7 +42,7 @@ instantiate k (Scope t) = t >>= k'
   k' (B b) = k b
   k' (F x) = pure x
 
-abstract :: Monad f => (a -> Maybe b) -> f a -> Scope b f a
+abstract :: Functor f => (a -> Maybe b) -> f a -> Scope b f a
 abstract k t = Scope $ fmap k' t
  where
   k' x = case k x of

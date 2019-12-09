@@ -1,9 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 
 module Parser
-  ( parseDefs
-  , parseRepl
-  )
+  ( program )
 where
 
 import           Control.Applicative     hiding ( Const
@@ -13,19 +11,35 @@ import           Control.Applicative     hiding ( Const
 import           Control.Monad
 import qualified Control.Monad.Combinators.NonEmpty
                                                as NE
+import           Control.Monad.State
 import           Data.Bifunctor
 import           Data.List.NonEmpty             ( NonEmpty(..) )
+import           Data.Map                       ( Map )
+import qualified Data.Map                      as Map
 import           Data.Void
-import           Syntax
-import           Text.Megaparsec
+import           Syntax.Base
+import           Syntax.Scope
+import           Syntax.Surface
+import           Text.Megaparsec         hiding ( State(..)
+                                                , Label
+                                                )
 import           Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer    as L
 
-type Parser a = Parsec Void String a
+type Parser a = ParsecT Void String (State Metadata) a
+
+node :: Parser Label
+node = state nextLabel
+
+binder :: NonEmpty String -> Parser (Expr String) -> Parser (Scope Expr String)
+binder xs expr = do
+  s <- state $ nextScope (Just xs)
+  bind s xs <$> expr
 
 keywords :: [String]
 keywords = ["def", "fun", "err", "match"]
 
+symbol :: String -> Parser String
 symbol = L.symbol space
 
 keyword :: String -> Parser String
@@ -49,43 +63,43 @@ ident =
 cons :: Parser Cons
 cons = lexeme $ MkCons <$> ((:) <$> upperChar <*> many alphaNumChar)
 
-topLevel :: Parser (TopLevel String)
+topLevel :: Parser (Def Expr String)
 topLevel = keyword "def" >> do
   name <- ident
   args <- NE.some ident <* symbol "->"
-  body <- bind args <$> expr
-  return $ DefFun name args body
+  body <- binder args expr
+  return $ Def name body
 
 stringLiteral :: Parser String
 stringLiteral = lexeme $ char '\"' *> manyTill L.charLiteral (char '\"')
 
 expr :: Parser (Expr String)
-expr = fmap
-  (\case
-    x                :| []       -> x
-    (Const (Cons c)) :| (y : ys) -> CApp c (y :| ys)
-    x                :| (y : ys) -> App x (y :| ys)
-  )
-  exprs
+expr = exprs >>= \case
+  x                  :| []       -> pure x
+  (Const l (Cons c)) :| (y : ys) -> pure $ CApp l c (y :| ys)
+  x                  :| (y : ys) -> do
+    l <- node
+    pure $ App l x (y :| ys)
 
 exprs :: Parser (NonEmpty (Expr String))
 exprs = NE.some atom
 
 atom :: Parser (Expr String)
 atom = choice
-  [ Var <$> ident
-  , Const <$> constant
+  [ Var <$> node <*> ident
+  , Const <$> node <*> constant
   , parens expr
-  , keyword "err" >> (Err <$> lexeme stringLiteral)
+  , keyword "err" >> (Err <$> node <*> lexeme stringLiteral)
   , keyword "fun" >> do
     args <- NE.some ident <* symbol "->"
-    body <- bind args <$> expr
-    return $ Lambda args body
+    l    <- node
+    body <- binder args expr
+    return $ Lambda l body
   , Parser.match
   ]
 
 match :: Parser (Expr String)
-match = keyword "match" >> (Case <$> expr <*> many Parser.pattern)
+match = keyword "match" >> (Case <$> node <*> expr <*> many Parser.pattern)
 
 pattern :: Parser (Pattern Expr String)
 pattern = symbol "|" >> choice
@@ -93,8 +107,8 @@ pattern = symbol "|" >> choice
     tag  <- cons
     args <- NE.some ident
     symbol "->"
-    body <- bind args <$> expr
-    return $ PatCons tag args body
+    body <- binder args expr
+    return $ PatCons tag body
   , PatConst <$> constant <*> (symbol "->" >> expr)
   , PatWild <$> (symbol "_" >> symbol "->" >> expr)
   ]
@@ -103,11 +117,10 @@ constant :: Parser Const
 constant =
   choice [Int <$> lexeme L.decimal, String <$> stringLiteral, Cons <$> cons]
 
-defs :: Parser [TopLevel String]
-defs = many topLevel
-
-parseDefs :: String -> Either String [TopLevel String]
-parseDefs s = first errorBundlePretty $ parse (defs <* eof) "stdin" s
-
-parseRepl :: String -> Either String (Expr String)
-parseRepl s = first errorBundlePretty $ parse (expr <* eof) "repl" s
+program :: String -> Either String (Program Expr)
+program s = case e of
+  Left  err -> Left $ errorBundlePretty err
+  Right v   -> Right $ Program v m
+ where
+  a      = runParserT (many topLevel <* eof) "stdin" s
+  (e, m) = runState a initMetadata

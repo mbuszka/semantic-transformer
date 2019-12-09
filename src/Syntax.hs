@@ -34,14 +34,15 @@ import           Data.Text.Prettyprint.Doc.Render.String
                                                 ( renderString )
 import           Debug.Trace
 
-newtype Cons = MkCons String deriving (Eq, Show)
+newtype Cons = MkCons String
+  deriving (Eq, Ord, Show)
 
 instance Pretty Cons where
   pretty (MkCons s) = pretty s
 
 
 data Const = Int Int | String String | Cons Cons
-  deriving (Eq)
+  deriving (Eq, Ord)
 
 instance Show Const where
   show (Int    i         ) = show i
