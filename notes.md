@@ -15,3 +15,14 @@ Pipeline:
     labels
 - perform defunctionalization using information gained from previous
   transformation
+
+
+
+defunctionalization:
+  - find all lambdas and name their constructors
+  - for every distinct set of functions at call site:
+    - generate apply function which pattern matches first argument and has
+      appropriate body of lambda in each case
+  - for every call site:
+    - if known function call, leave as is
+    - otherwise replace with a call to apply function, passing 

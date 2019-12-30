@@ -10,19 +10,18 @@ import           Data.Set                       ( Set )
 import qualified Data.Set                      as Set
 import Data.Text.Prettyprint.Doc
 import           Syntax.Denormalized
-import           Syntax.Base                    ( Label )
-import           Syntax.Scope                   ( ScopeLabel )
+import           Syntax.Base                    hiding (Program (..))
 
-data Conf = Conf Label Addr
+data Conf = Conf ELabel Addr
   deriving (Eq, Ord, Show)
 
-data Addr = Addr Label | Nil
+data Addr = Addr ELabel | Nil
   deriving (Eq, Ord, Show)
 
-data Val = Closure Scope | Val
+data Val = Closure (Scope ELabel) | Val
   deriving (Eq, Ord, Show)
 
-data Kont = Kont Scope Addr
+data Kont = Kont (Scope ELabel) Addr
   deriving (Eq, Ord, Show)
 
 newtype Store k v = Store (Map k (Set v))
@@ -41,23 +40,23 @@ instance (Pretty k, Pretty v) => Pretty (Store k v) where
 
 type VStore = Store Var Val
 
-type KStore = Store Label Kont
+type KStore = Store ELabel Kont
 
 data State = State (Set Conf) VStore KStore
   deriving (Eq, Ord, Show)
 
-push :: Scope -> Addr -> KStore -> (Addr, KStore)
+push :: (Scope ELabel) -> Addr -> KStore -> (Addr, KStore)
 push s@(Scope _ _ l) prev store = (Addr l, extend l (Kont s prev) store)
 
-expr :: Pattern -> Label
-expr (PatCons  _ (Scope _ _ l)) = l
+expr :: (Pattern ELabel) -> ELabel
+expr (PatConstructor  _ (Scope _ _ l)) = l
 expr (PatConst _ l            ) = l
 expr (PatWild l               ) = l
 
 extend :: (Ord k, Ord v) => k -> v -> Store k v -> Store k v
 extend k v (Store s) = Store $ Map.insertWith (<>) k (Set.singleton v) s
 
-enter :: Scope -> [Val] -> VStore -> (Label, VStore)
+enter :: (Scope ELabel) -> [Val] -> VStore -> (ELabel, VStore)
 enter (Scope l cnt b) vs store =
   let args = fmap (Local l) [0 .. cnt] `zip` vs
   in  ( b
@@ -94,7 +93,7 @@ step p vs ks (Conf l k) = case getExpr l p of
   Match a ps -> ps >>= \case
     PatWild l     -> pure (Conf l k, vs, ks)
     PatConst _ l  -> pure (Conf l k, vs, ks)
-    PatCons  _ sc -> do
+    PatConstructor  _ sc -> do
       let (e, vs') = enter sc vals vs
       pure (Conf e k, vs', ks)
   Err  _ -> []
@@ -121,13 +120,13 @@ run p@(Program es ds) =
       (l, vs') = enter main vals (Store vs)
   in  drive p $ State (Set.singleton $ Conf l Nil) vs' mempty
 
-closures :: State -> Atom -> Set ScopeLabel
+closures :: State -> Atom -> Set SLabel
 closures (State cs vs ks) a = foldMap f $ aval a vs
  where
   f Val                     = Set.empty
   f (Closure (Scope l _ _)) = Set.singleton l
 
-appClosures :: Program -> Map Label (Set ScopeLabel)
+appClosures :: Program -> Map ELabel (Set SLabel)
 appClosures p@(Program es ds) =
   let s = run p
       f (App a _) = Just $ closures s a

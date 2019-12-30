@@ -23,12 +23,12 @@ data Value
   = Closure (NonEmpty String) (Expr String) Env
   | PrimOp (NonEmpty Value -> EvalM Value)
   | VConst Const
-  | Struct Cons (NonEmpty Value)
+  | Struct Tag (NonEmpty Value)
 
 instance Show Value where
   show (Closure args body _) = "<closure>"
   show (VConst c           ) = show c
-  show (Struct (MkCons name) vals) =
+  show (Struct (MkTag name) vals) =
     "(" ++ show name ++ " " ++ show vals ++ ")"
 
 type Cont a = Value -> EvalM a
@@ -72,7 +72,7 @@ evalArgs env (e :| e' : exprs) vals k =
 evalCase :: Env -> Value -> [Pattern Expr String] -> Cont a -> EvalM a
 evalCase env _ [] k = Left "No branch in case"
 evalCase env (VConst a) (PatConst b e : ps) k | a == b = eval env e k
-evalCase env (Struct t vs) (PatCons t' ns b : es) k | t == t' =
+evalCase env (Struct t vs) (PatConstructor t' ns b : es) k | t == t' =
   if length vs == length ns
     then
       let env' = (Map.fromList . toList) (NE.zip ns vs) `Map.union` env
@@ -99,7 +99,7 @@ initial = Map.fromList
   , ( "streq"
     , PrimOp $ \case
       VConst (String a) :| [VConst (String b)] ->
-        pure $ VConst (Cons (MkCons if a == b then "True" else "False"))
+        pure $ VConst (Tag (MkTag if a == b then "True" else "False"))
     )
   ]
 

@@ -70,7 +70,7 @@ mkAppK f xs k = do
   let body = App (free f) (NE.reverse $ weaken k :| bound 0 : fmap free xs)
   return $ lam name body
 
-mkCAppK :: Cons -> [a] -> Expr a -> State Int (Expr a)
+mkCAppK :: Tag -> [a] -> Expr a -> State Int (Expr a)
 mkCAppK c xs k = do
   name <- fresh
   let body = app (weaken k) $ CApp c (NE.reverse $ bound 0 :| fmap free xs)
@@ -108,7 +108,7 @@ cpsApp fVar vars (e :| ee : es) k = do
   k' <- lam <$> fresh <*> pure e'
   cpsTransform k' e
 
-cpsCApp :: Cons -> [a] -> NonEmpty (Expr a) -> Expr a -> State Int (Expr a)
+cpsCApp :: Tag -> [a] -> NonEmpty (Expr a) -> Expr a -> State Int (Expr a)
 cpsCApp c vars (e :| []) k = do
   k' <- mkCAppK c vars k
   cpsTransform k' e
@@ -120,9 +120,9 @@ cpsCApp c vars (e :| ee : es) k = do
 cpsPattern :: Expr a -> Pattern Expr a -> State Int (Pattern Expr a)
 cpsPattern k (PatConst c e          ) = PatConst c <$> cpsTransform k e
 cpsPattern k (PatWild e             ) = PatWild <$> cpsTransform k e
-cpsPattern k (PatCons c ns (Scope e)) = do
+cpsPattern k (PatConstructor c ns (Scope e)) = do
   e' <- cpsTransform (weaken k) e
-  return $ PatCons c ns (Scope e')
+  return $ PatConstructor c ns (Scope e')
 
 cpsTop :: TopLevel a -> State Int (TopLevel a)
 cpsTop (DefFun n args (Scope b)) = do

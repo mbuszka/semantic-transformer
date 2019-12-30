@@ -1,7 +1,8 @@
 {-# LANGUAGE LambdaCase #-}
 
 module Parser
-  ( program )
+  ( program
+  )
 where
 
 import           Control.Applicative     hiding ( Const
@@ -12,29 +13,37 @@ import           Control.Monad
 import qualified Control.Monad.Combinators.NonEmpty
                                                as NE
 import           Control.Monad.State
+import           Control.Monad.Reader
 import           Data.Bifunctor
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import           Data.Map                       ( Map )
 import qualified Data.Map                      as Map
+import           Data.Foldable
 import           Data.Void
 import           Syntax.Base
-import           Syntax.Scope
 import           Syntax.Surface
 import           Text.Megaparsec         hiding ( State(..)
-                                                , Label
+                                                , ELabel
                                                 )
 import           Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer    as L
 
-type Parser a = ParsecT Void String (State Metadata) a
+type Parser a = ParsecT Void String (ReaderT Env (State Metadata)) a
 
-node :: Parser Label
+type Env = Map String Var
+
+node :: Parser ELabel
 node = state nextLabel
 
-binder :: NonEmpty String -> Parser (Expr String) -> Parser (Scope Expr String)
+withBindings :: SLabel -> NonEmpty String -> Env -> Env
+withBindings s xs e =
+  let vs = zip (toList xs) (map (Local s) [0 ..])
+  in  Map.union (Map.fromList vs) e
+
+binder :: NonEmpty String -> Parser Expr -> Parser (Scope Expr)
 binder xs expr = do
   s <- state $ nextScope (Just xs)
-  bind s xs <$> expr
+  Scope s (length xs) <$> local (withBindings s xs) expr
 
 keywords :: [String]
 keywords = ["def", "fun", "err", "match"]
@@ -60,10 +69,16 @@ ident =
     <$> lowerChar
     <*> many alphaNumChar
 
-cons :: Parser Cons
-cons = lexeme $ MkCons <$> ((:) <$> upperChar <*> many alphaNumChar)
+var :: Parser Var
+var = do
+  s <- ident
+  e <- ask
+  return $ Map.findWithDefault (Global s) s e
 
-topLevel :: Parser (Def Expr String)
+cons :: Parser Tag
+cons = lexeme $ MkTag <$> ((:) <$> upperChar <*> many alphaNumChar)
+
+topLevel :: Parser (Def Expr)
 topLevel = keyword "def" >> do
   name <- ident
   args <- NE.some ident <* symbol "->"
@@ -73,21 +88,21 @@ topLevel = keyword "def" >> do
 stringLiteral :: Parser String
 stringLiteral = lexeme $ char '\"' *> manyTill L.charLiteral (char '\"')
 
-expr :: Parser (Expr String)
+expr :: Parser Expr
 expr = exprs >>= \case
   x                  :| []       -> pure x
-  (Const l (Cons c)) :| (y : ys) -> pure $ CApp l c (y :| ys)
+  (Constant l (Tag c)) :| (y : ys) -> pure $ CApp l c (y :| ys)
   x                  :| (y : ys) -> do
     l <- node
     pure $ App l x (y :| ys)
 
-exprs :: Parser (NonEmpty (Expr String))
+exprs :: Parser (NonEmpty Expr)
 exprs = NE.some atom
 
-atom :: Parser (Expr String)
+atom :: Parser Expr
 atom = choice
-  [ Var <$> node <*> ident
-  , Const <$> node <*> constant
+  [ Var <$> node <*> var
+  , Constant <$> node <*> constant
   , parens expr
   , keyword "err" >> (Err <$> node <*> lexeme stringLiteral)
   , keyword "fun" >> do
@@ -98,24 +113,24 @@ atom = choice
   , Parser.match
   ]
 
-match :: Parser (Expr String)
+match :: Parser Expr
 match = keyword "match" >> (Case <$> node <*> expr <*> many Parser.pattern)
 
-pattern :: Parser (Pattern Expr String)
+pattern :: Parser (Pattern Expr)
 pattern = symbol "|" >> choice
   [ try $ do
     tag  <- cons
     args <- NE.some ident
     symbol "->"
     body <- binder args expr
-    return $ PatCons tag body
+    return $ PatConstructor tag body
   , PatConst <$> constant <*> (symbol "->" >> expr)
   , PatWild <$> (symbol "_" >> symbol "->" >> expr)
   ]
 
-constant :: Parser Const
+constant :: Parser Constant
 constant =
-  choice [Int <$> lexeme L.decimal, String <$> stringLiteral, Cons <$> cons]
+  choice [Int <$> lexeme L.decimal, String <$> stringLiteral, Tag <$> cons]
 
 program :: String -> Either String (Program Expr)
 program s = case e of
@@ -123,4 +138,4 @@ program s = case e of
   Right v   -> Right $ Program v m
  where
   a      = runParserT (many topLevel <* eof) "stdin" s
-  (e, m) = runState a initMetadata
+  (e, m) = runState (runReaderT a Map.empty) initMetadata

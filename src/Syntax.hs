@@ -6,7 +6,7 @@
 {-# LANGUAGE RankNTypes #-}
 
 module Syntax
-  ( Cons(..)
+  ( Tag(..)
   , Const(..)
   , Expr(..)
   , Pattern(..)
@@ -34,30 +34,30 @@ import           Data.Text.Prettyprint.Doc.Render.String
                                                 ( renderString )
 import           Debug.Trace
 
-newtype Cons = MkCons String
+newtype Tag = MkTag String
   deriving (Eq, Ord, Show)
 
-instance Pretty Cons where
-  pretty (MkCons s) = pretty s
+instance Pretty Tag where
+  pretty (MkTag s) = pretty s
 
 
-data Const = Int Int | String String | Cons Cons
+data Const = Int Int | String String | Tag Tag
   deriving (Eq, Ord)
 
 instance Show Const where
   show (Int    i         ) = show i
   show (String s         ) = show s
-  show (Cons   (MkCons c)) = c
+  show (Tag   (MkTag c)) = c
 
 instance Pretty Const where
   pretty (Int    x) = pretty x
   pretty (String x) = pretty (show x)
-  pretty (Cons   c) = pretty c
+  pretty (Tag   c) = pretty c
 
 
 data Pattern f a
   = PatConst Const (f a)
-  | PatCons Cons (NonEmpty String) (Scope Int f a)
+  | PatConstructor Tag (NonEmpty String) (Scope Int f a)
   | PatWild (f a)
   deriving (Functor, Foldable, Traversable)
 
@@ -65,7 +65,7 @@ deriving instance (Show (f a), Show (f (Var Int a))) => Show (Pattern f a)
 
 instance Subst Pattern where
   subst k (PatConst c e  ) = PatConst c (e >>= k)
-  subst k (PatCons t ns s) = PatCons t ns (subst k s)
+  subst k (PatConstructor t ns s) = PatConstructor t ns (subst k s)
   subst k (PatWild e     ) = PatWild (e >>= k)
 
 
@@ -77,7 +77,7 @@ data Expr a
   | Err String
   | Lambda (NonEmpty String) (Bind a)
   | App (Expr a) (NonEmpty (Expr a))
-  | CApp Cons (NonEmpty (Expr a))
+  | CApp Tag (NonEmpty (Expr a))
   | Case (Expr a) [Pattern Expr a]
   deriving (Functor, Foldable, Traversable)
 
@@ -117,7 +117,7 @@ unbind xs = instantiate (Var . (xs NE.!!))
 mapPattern :: (forall a . f a -> f a) -> Pattern f a -> Pattern f a
 mapPattern f (PatWild e             ) = PatWild (f e)
 mapPattern f (PatConst c e          ) = PatConst c (f e)
-mapPattern f (PatCons t ns (Scope e)) = PatCons t ns (Scope (f e))
+mapPattern f (PatConstructor t ns (Scope e)) = PatConstructor t ns (Scope (f e))
 
 
 -- Pretty Printing Helpers --
@@ -125,7 +125,7 @@ mapPattern f (PatCons t ns (Scope e)) = PatCons t ns (Scope (f e))
 prettyPat :: Pattern Expr (Doc ann) -> Doc ann
 prettyPat (PatConst c e) =
   pretty "|" <+> pretty c <+> pretty "->" <+> prettyExpr NoParens e
-prettyPat (PatCons t ns b) =
+prettyPat (PatConstructor t ns b) =
   let ns' = fmap pretty ns
   in  pretty "|"
         <+> pretty t
