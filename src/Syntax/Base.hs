@@ -63,6 +63,10 @@ instance Pretty SLabel where
 instance Pretty ELabel where
   pretty (ELabel l) = pretty l
 
+instance Pretty Var where
+  pretty (Local idx b) = pretty idx <> pretty "#" <> pretty b
+  pretty (Global str ) = pretty str
+
 instance Pretty Constant where
   pretty (Int    x) = pretty x
   pretty (String x) = pretty (show x)
@@ -81,3 +85,7 @@ nextScope xs (Metadata l (SLabel n) m) =
   in  case xs of
         Just xs -> (s, Metadata l s (Map.insert s xs m))
         Nothing -> (s, Metadata l s m)
+
+appendFreshVar :: Scope e -> (Scope e, Var)
+appendFreshVar (Scope l cnt e) = (Scope l (cnt+1) e, Local l cnt)
+

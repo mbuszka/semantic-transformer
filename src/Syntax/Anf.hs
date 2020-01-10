@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE BlockArguments #-}
@@ -8,7 +9,7 @@
 
 module Syntax.Anf where
   -- ( Atom(..)
-  -- , Expr(..)
+  -- , Anf(..)
   -- , M
   -- , rename
   -- , scope
@@ -20,6 +21,7 @@ module Syntax.Anf where
   -- )
 
 import           Control.Lens
+import           Data.Data
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.List.NonEmpty            as NE
 import           Data.Map                       ( Map )
@@ -32,59 +34,74 @@ import           Control.Monad.State
 import           Syntax.Base
 import qualified Syntax.Surface                as S
 
-data Expr
-  = Err ELabel String
-  | App ELabel Atom (NonEmpty Atom)
-  | Match ELabel Atom [Pattern Expr]
-  | Let ELabel Expr (Scope Expr)
-  | Atom ELabel Atom
+data Anf = Anf ELabel (ExprF Anf)
+  deriving (Data, Typeable)
 
-data Atom
+data ExprF e
+  = Err String
+  | App (Atom e) (NonEmpty (Atom e))
+  | Match (Atom e) [Pattern e]
+  | Let e (Scope e)
+  | Atom (Atom e)
+  deriving (Functor, Foldable, Traversable, Data, Typeable)
+
+data Atom e
   = Var Var
   | Constant Constant
-  | Lambda (Scope Expr)
-  | CApp Tag (NonEmpty Atom)
+  | Lambda (Scope e)
+  | CApp Tag (NonEmpty (Atom e))
+  deriving (Functor, Foldable, Traversable, Data, Typeable)
 
-$(makePrisms ''Expr)
+$(makePrisms ''ExprF)
 $(makePrisms ''Atom)
+$(makeLenses ''Anf)
 
-rename :: Map Var Var -> Expr -> Expr
-rename _ e@Err{}         = e
-rename e (App   l f  xs) = App l (renameA e f) (fmap (renameA e) xs)
-rename e (Match l v  ps) = Match l (renameA e v) $ fmap (fmap (rename e)) ps
-rename e (Let   l ex b ) = Let l (rename e ex) (fmap (rename e) b)
-rename e (Atom l a     ) = Atom l $ renameA e a
+instance Plated Anf
+instance (Data e, Plated e) => Plated (ExprF e)
+instance (Data e, Plated e) => Plated (Atom e)
 
-renameA :: Map Var Var -> Atom -> Atom
+unExpr :: Anf -> ExprF Anf
+unExpr (Anf _ e) = e
+
+rename :: Map Var Var -> Anf -> Anf
+rename env (Anf l e) = Anf l $ case e of
+  e@Err{}       -> e
+  (App   f  xs) -> App (renameA env f) (fmap (renameA env) xs)
+  (Match v  ps) -> Match (renameA env v) $ fmap (fmap (rename env)) ps
+  (Let   ex b ) -> Let (rename env ex) (fmap (rename env) b)
+  (Atom a     ) -> Atom $ renameA env a
+
+renameA :: Map Var Var -> Atom Anf -> Atom Anf
 renameA e (Var v)      = Var $ e Map.! v
 renameA _ c@Constant{} = c
 renameA e (Lambda s )  = Lambda $ fmap (rename e) s
 renameA e (CApp c xs)  = CApp c $ fmap (renameA e) xs
 
-fvs :: Expr -> Set Var
-fvs (App   _ f xs) = fvsA f <> foldMap fvsA xs
-fvs (Match _ a ps) = fvsA a <> foldMap fvsP ps
-fvs (Let   _ e s ) = fvs e <> fvsS s
-fvs (Atom _ a    ) = fvsA a
+fvs :: Anf -> Set Var
+fvs (Anf _ e) = case e of
+  (App   f xs) -> fvsA f <> foldMap fvsA xs
+  (Match a ps) -> fvsA a <> foldMap fvsP ps
+  (Let   e s ) -> fvs e <> fvsS s
+  (Atom a    ) -> fvsA a
 
-fvsA :: Atom -> Set Var
+fvsA :: Atom Anf -> Set Var
 fvsA (Var      v) = Set.singleton v
 fvsA (Constant _) = Set.empty
 fvsA (Lambda   s) = fvsS s
 fvsA (CApp _ xs ) = foldMap fvsA xs
 
-fvsP :: Pattern Expr -> Set Var
+fvsP :: Pattern Anf -> Set Var
 fvsP (PatConstructor _ s) = fvsS s
 fvsP (PatConst       _ e) = fvs e
 fvsP (PatWild e         ) = fvs e
 
-fvsS :: Scope Expr -> Set Var
+fvsS :: Scope Anf -> Set Var
 fvsS (Scope l cnt e) =
   fvs e Set.\\ Set.fromList [ Local l x | x <- [0 .. cnt - 1] ]
 
 
 type M a = State Metadata a
-type Res = M (Either Expr (ELabel, Atom))
+type Res = M (Either Anf (ELabel, Atom Anf))
 
 label :: M ELabel
 label = state nextLabel
@@ -92,56 +109,56 @@ label = state nextLabel
 scope :: M SLabel
 scope = state $ nextScope Nothing
 
-binding :: M (SLabel, Atom)
+binding :: M (SLabel, Atom Anf)
 binding = do
   l <- scope
   return (l, Var $ Local l 0)
 
-app :: ELabel -> Atom -> NonEmpty S.Expr -> M Expr
+app :: ELabel -> Atom Anf -> NonEmpty S.Expr -> M Anf
 app l f xs = aux [] (NE.toList xs)
  where
-  aux :: [Atom] -> [S.Expr] -> M Expr
-  aux acc []       = pure $ App l f (NE.fromList $ reverse acc)
+  aux :: [Atom Anf] -> [S.Expr] -> M Anf
+  aux acc []       = pure . Anf l $ App f (NE.fromList $ reverse acc)
   aux acc (x : xs) = toExpr <$> atomic x (\a -> Left <$> aux (a : acc) xs)
 
-toExpr :: Either Expr (ELabel, Atom) -> Expr
+toExpr :: Either Anf (ELabel, Atom Anf) -> Anf
 toExpr (Left  e     ) = e
-toExpr (Right (l, a)) = Atom l a
+toExpr (Right (l, a)) = Anf l $ Atom a
 
-atomic :: S.Expr -> (Atom -> Res) -> Res
+atomic :: S.Expr -> (Atom Anf -> Res) -> Res
 atomic e k = expr e >>= \case
   Left e -> do
     (s, v) <- binding
     l      <- label
     body   <- k v
-    return $ Left (Let l e (Scope s 1 $ toExpr body))
+    return . Left . Anf l $ Let e (Scope s 1 $ toExpr body)
   Right (_, a) -> k a
 
 capp :: ELabel -> Tag -> NonEmpty S.Expr -> Res
 capp l c xs = aux [] (NE.toList xs)
  where
-  aux :: [Atom] -> [S.Expr] -> Res
+  aux :: [Atom Anf] -> [S.Expr] -> Res
   aux acc []       = pure . Right $ (l, CApp c $ (NE.fromList $ reverse acc))
   aux acc (x : xs) = atomic x (\a -> aux (a : acc) xs)
 
 expr :: S.Expr -> Res
 expr (S.Var      l a               ) = pure (Right (l, Var a))
 expr (S.Constant l c               ) = pure (Right (l, Constant c))
-expr (S.Lambda   l (Scope sl cnt e)) = expr e >>= \case
-  Left  e       -> pure (Right (l, Lambda (Scope sl cnt e)))
-  Right (l', a) -> pure (Right (l, Lambda (Scope sl cnt (Atom l' a))))
+expr (S.Lambda   l (Scope sl cnt e)) = do
+  b <- expr e
+  pure . Right $ (l, Lambda (Scope sl cnt $ toExpr b))
 expr (S.App  l f xs) = atomic f \f -> Left <$> app l f xs
 expr (S.CApp l c xs) = capp l c xs
 expr (S.Case l e ps) = atomic e (\v -> match l ps v)
-expr (S.Err l s    ) = pure (Left (Err l s))
+expr (S.Err l s    ) = pure . Left . Anf l $ Err s
 
-match :: ELabel -> [Pattern S.Expr] -> Atom -> Res
+match :: ELabel -> [Pattern S.Expr] -> Atom Anf -> Res
 match l ps v = do
   ps' <- traverse aux ps
-  pure (Left $ Match l v ps')
+  pure . Left . Anf l $ Match v ps'
   where aux = traverse (\p -> toExpr <$> expr p)
 
-fromSurface :: Program S.Expr -> Program Expr
+fromSurface :: Program S.Expr -> Program Anf
 fromSurface (Program defs md) =
   let (ds', md') =
           runState (traverse (traverse (\v -> toExpr <$> expr v)) defs) md
@@ -150,19 +167,19 @@ fromSurface (Program defs md) =
 dummy :: ELabel
 dummy = ELabel 0
 
-toSurface :: Program Expr -> Program S.Expr
+toSurface :: Program Anf -> Program S.Expr
 toSurface (Program ds md) = Program ds' md where ds' = fmap toSurfaceE <$> ds
 
-toSurfaceA :: Atom -> S.Expr
+toSurfaceA :: Atom Anf -> S.Expr
 toSurfaceA (Var      a) = S.Var dummy a
 toSurfaceA (Constant c) = S.Constant dummy c
 toSurfaceA (Lambda   s) = S.Lambda dummy (fmap toSurfaceE s)
 toSurfaceA (CApp c xs ) = S.CApp dummy c (toSurfaceA <$> xs)
 
-toSurfaceE :: Expr -> S.Expr
-toSurfaceE (App l f xs) = S.App l (toSurfaceA f) (toSurfaceA <$> xs)
-toSurfaceE (Match _ v ps) =
-  S.Case dummy (toSurfaceA v) (fmap toSurfaceE <$> ps)
-toSurfaceE (Err _ s  ) = S.Err dummy s
-toSurfaceE (Let _ e s) = S.Let dummy (toSurfaceE e) (fmap toSurfaceE s)
-toSurfaceE (Atom _ a ) = toSurfaceA a
+toSurfaceE :: Anf -> S.Expr
+toSurfaceE (Anf l e) = case e of
+  (App   f xs) -> S.App l (toSurfaceA f) (toSurfaceA <$> xs)
+  (Match v ps) -> S.Case dummy (toSurfaceA v) (fmap toSurfaceE <$> ps)
+  (Err s     ) -> S.Err dummy s
+  (Let e s   ) -> S.Let dummy (toSurfaceE e) (fmap toSurfaceE s)
+  (Atom a    ) -> toSurfaceA a

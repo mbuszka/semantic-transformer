@@ -10,7 +10,8 @@ import           Data.Set                       ( Set )
 import qualified Data.Set                      as Set
 import Data.Text.Prettyprint.Doc
 import           Syntax.Denormalized
-import           Syntax.Base                    hiding (Program (..))
+import           Syntax.Anf
+import           Syntax.Base
 
 data Conf = Conf ELabel Addr
   deriving (Eq, Ord, Show)
@@ -73,16 +74,16 @@ get k (Store s) = case s Map.!? k of
   Nothing -> []
   Just vs -> Set.toList vs
 
-aval :: Atom -> VStore -> [Val]
+aval :: Atom ELabel -> VStore -> [Val]
 aval (Var    x) s = get x s
-aval (Const  _) _ = [Val]
+aval (Constant  _) _ = [Val]
 aval (Lambda s) _ = [Closure s]
 aval (CApp _ _) _ = [Val]
 
 vals :: [Val]
 vals = Val : vals
 
-step :: Program -> VStore -> KStore -> Conf -> [(Conf, VStore, KStore)]
+step :: Denormalized -> VStore -> KStore -> Conf -> [(Conf, VStore, KStore)]
 step p vs ks (Conf l k) = case getExpr l p of
   Let e b  -> let (k', ks') = push b k ks in [(Conf e k', vs, ks')]
   App f xs -> do
@@ -105,7 +106,7 @@ step p vs ks (Conf l k) = case getExpr l p of
       pure (Conf e k, vs', ks)
     Nil -> []
 
-drive :: Program -> State -> State
+drive :: Denormalized -> State -> State
 drive p s@(State cs vs ks) =
   let (cs', vss, kss) = unzip3 $ foldMap (step p vs ks) cs
       vs'             = fold vss
@@ -113,21 +114,21 @@ drive p s@(State cs vs ks) =
       s'              = State (Set.fromList cs') vs' ks'
   in  if s == s' then s else drive p s'
 
-run :: Program -> State
-run p@(Program es ds) =
+run :: Denormalized -> State
+run p@(Denormalized es ds) =
   let main     = ds Map.! (Global "main")
       vs       = (Set.singleton . Closure) <$> ds
       (l, vs') = enter main vals (Store vs)
   in  drive p $ State (Set.singleton $ Conf l Nil) vs' mempty
 
-closures :: State -> Atom -> Set SLabel
+closures :: State -> Atom ELabel -> Set SLabel
 closures (State cs vs ks) a = foldMap f $ aval a vs
  where
   f Val                     = Set.empty
   f (Closure (Scope l _ _)) = Set.singleton l
 
-appClosures :: Program -> Map ELabel (Set SLabel)
-appClosures p@(Program es ds) =
+appClosures :: Denormalized -> Map ELabel (Set SLabel)
+appClosures p@(Denormalized es ds) =
   let s = run p
       f (App a _) = Just $ closures s a
       f _ = Nothing

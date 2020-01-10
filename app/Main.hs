@@ -6,9 +6,7 @@ import           Syntax.Surface
 import qualified Syntax.Anf                    as Anf
 import qualified Syntax.Denormalized           as D
 import qualified Analysis.ControlFlow          as Cfa
-import           Eval
 import qualified Transform.Cps                 as Cps
-import           Bind
 import           Control.Monad.State.Lazy
 import           Data.Bifunctor
 import           Data.List.NonEmpty             ( NonEmpty(..) )
@@ -29,7 +27,7 @@ opts = info
   )
 
 instance Pretty a => Pretty (Set.Set a) where
-  pretty s = group . vsep . fmap pretty . Set.toList $ s
+  pretty = group . vsep . fmap pretty . Set.toList
 
 main :: IO ()
 main = do
@@ -49,6 +47,8 @@ main = do
       putStrLn "Results of analysis"
       putStrLn $ renderString . layoutSmart defaultLayoutOptions $ vsep
         (pretty <$> Map.toList s)
+      putStrLn "Cps transformed"
+      putStrLn . pprintPgm . Anf.toSurface . Cps.program $ anf
 
       -- putStrLn "\nCps transformed"
       -- let cpsDefs = map Cps.top defs

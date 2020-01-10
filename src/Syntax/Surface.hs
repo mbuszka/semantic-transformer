@@ -39,11 +39,6 @@ pprintPgm p = renderString . layoutSmart defaultLayoutOptions $ doc
  where
   doc = vsep . fmap (\d -> prettyDef d <> line) . definitions $ p
 
-
-instance Pretty Var where
-  pretty (Local idx b) = pretty idx <> pretty "#" <> pretty b
-  pretty (Global str ) = pretty str
-
 prettyPat :: Pattern Expr -> Doc ann
 prettyPat (PatConst c e) =
   pretty "|" <+> pretty c <+> pretty "->" <+> prettyExpr NoParens e
