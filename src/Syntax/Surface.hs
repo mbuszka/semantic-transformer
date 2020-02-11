@@ -5,6 +5,7 @@ module Syntax.Surface
   )
 where
 
+import Control.Lens
 import           Control.Monad.State
 import qualified Data.List.NonEmpty            as NE
 import           Data.List.NonEmpty             ( NonEmpty(..) )
@@ -37,7 +38,7 @@ pprintExpr e = renderString . layoutSmart defaultLayoutOptions $ prettyExpr
 pprintPgm :: Program Expr -> String
 pprintPgm p = renderString . layoutSmart defaultLayoutOptions $ doc
  where
-  doc = vsep . fmap (\d -> prettyDef d <> line) . definitions $ p
+  doc = vsep . fmap (\d -> prettyDef d <> line) $ p ^. definitions
 
 prettyPat :: Pattern Expr -> Doc ann
 prettyPat (PatConst c e) =

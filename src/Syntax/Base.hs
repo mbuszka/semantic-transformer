@@ -28,8 +28,11 @@ data Var = Local SLabel Int | Global String
 data Constant = Int Int | String String | Tag Tag
   deriving (Eq, Ord, Show, Data, Typeable)
 
-data Scope e = Scope SLabel Int e
-  deriving (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
+data Scope e = Scope
+  { _sLabel  :: SLabel
+  , _sArgCnt :: Int
+  , _sBody   :: e
+  } deriving (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
 
 data Pattern e
   = PatConst Constant e
@@ -40,18 +43,22 @@ data Pattern e
 data Def e = Def String (Scope e)
   deriving (Functor, Foldable, Traversable, Data, Typeable)
 
-data Metadata =
-  Metadata ELabel SLabel (Map SLabel (NonEmpty String))
+data Metadata = Metadata
+  { _mdNextExpression :: ELabel
+  , _mdNextScope      :: SLabel
+  , _mdScopeBindings  :: Map SLabel (NonEmpty String)
+  }
   deriving (Eq, Ord, Show, Data, Typeable)
 
 
 data Program e = Program
-  { definitions :: [Def e]
-  , metadata ::  Metadata
+  { _definitions :: [Def e]
+  , _metadata    :: Metadata
   }
 
-$(makeLenses ''Pattern)
-$(makeLenses ''Def)
+$(makeLenses ''Scope)
+$(makePrisms ''Pattern)
+$(makeLenses ''Metadata)
 $(makeLenses ''Program)
 
 instance Pretty Tag where
@@ -87,5 +94,5 @@ nextScope xs (Metadata l (SLabel n) m) =
         Nothing -> (s, Metadata l s m)
 
 appendFreshVar :: Scope e -> (Scope e, Var)
-appendFreshVar (Scope l cnt e) = (Scope l (cnt+1) e, Local l cnt)
+appendFreshVar (Scope l cnt e) = (Scope l (cnt + 1) e, Local l cnt)
 

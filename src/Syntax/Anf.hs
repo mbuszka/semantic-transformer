@@ -34,8 +34,10 @@ import           Control.Monad.State
 import           Syntax.Base
 import qualified Syntax.Surface                as S
 
-data Anf = Anf ELabel (ExprF Anf)
-  deriving (Data, Typeable)
+data Anf = Anf
+  { _aLabel :: ELabel
+  , _aExpr  :: ExprF Anf
+  } deriving (Data, Typeable)
 
 data ExprF e
   = Err String
