@@ -1,17 +1,18 @@
 {-# LANGUAGE LambdaCase #-}
+
 module Transform.Defun where
 
-import qualified Analysis.ControlFlow          as Cfa
-import           Syntax.Anf
-import           Syntax.Base
-import           Data.Map                       ( Map )
-import qualified Data.Map                      as Map
-import           Data.Set                       ( Set )
-import qualified Data.Set                      as Set
-import           Control.Lens
+import qualified Analysis.ControlFlow as Cfa
+import Control.Lens
+import Data.Map (Map)
+import qualified Data.Map as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
+import Syntax.Anf
+import Syntax.Base
 
 -- lambdas :: Program Anf -> Map SLabel (Scope Anf)
--- lambdas = 
+-- lambdas =
 
 -- lambdas :: Program Expr -> Map SLabel (Scope Expr)
 -- lambdas =

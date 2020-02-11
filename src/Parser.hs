@@ -1,32 +1,33 @@
 {-# LANGUAGE LambdaCase #-}
 
 module Parser
-  ( program
+  ( program,
   )
 where
 
-import           Control.Applicative     hiding ( Const
-                                                , many
-                                                , some
-                                                )
-import           Control.Monad
-import qualified Control.Monad.Combinators.NonEmpty
-                                               as NE
-import           Control.Monad.State
-import           Control.Monad.Reader
-import           Data.Bifunctor
-import           Data.List.NonEmpty             ( NonEmpty(..) )
-import           Data.Map                       ( Map )
-import qualified Data.Map                      as Map
-import           Data.Foldable
-import           Data.Void
-import           Syntax.Base
-import           Syntax.Surface
-import           Text.Megaparsec         hiding ( State(..)
-                                                , ELabel
-                                                )
-import           Text.Megaparsec.Char
-import qualified Text.Megaparsec.Char.Lexer    as L
+import Control.Applicative hiding
+  ( Const,
+    many,
+    some,
+  )
+import Control.Monad
+import qualified Control.Monad.Combinators.NonEmpty as NE
+import Control.Monad.Reader
+import Control.Monad.State
+import Data.Bifunctor
+import Data.Foldable
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.Map (Map)
+import qualified Data.Map as Map
+import Data.Void
+import Syntax.Base
+import Syntax.Surface
+import Text.Megaparsec hiding
+  ( ELabel,
+    State (..),
+  )
+import Text.Megaparsec.Char
+import qualified Text.Megaparsec.Char.Lexer as L
 
 type Parser a = ParsecT Void String (ReaderT Env (State Metadata)) a
 
@@ -38,7 +39,7 @@ node = state nextLabel
 withBindings :: SLabel -> NonEmpty String -> Env -> Env
 withBindings s xs e =
   let vs = zip (toList xs) (map (Local s) [0 ..])
-  in  Map.union (Map.fromList vs) e
+   in Map.union (Map.fromList vs) e
 
 binder :: NonEmpty String -> Parser Expr -> Parser (Scope Expr)
 binder xs expr = do
@@ -63,11 +64,9 @@ parens = between (symbol "(") (symbol ")")
 ident :: Parser String
 ident =
   try
-    $   mfilter (not . flip elem keywords)
-    $   lexeme
-    $   (:)
-    <$> lowerChar
-    <*> many alphaNumChar
+    $ mfilter (not . flip elem keywords)
+    $ lexeme
+    $ (:) <$> lowerChar <*> many alphaNumChar
 
 var :: Parser Var
 var = do
@@ -90,9 +89,9 @@ stringLiteral = lexeme $ char '\"' *> manyTill L.charLiteral (char '\"')
 
 expr :: Parser Expr
 expr = exprs >>= \case
-  x                  :| []       -> pure x
+  x :| [] -> pure x
   (Constant l (Tag c)) :| (y : ys) -> pure $ CApp l c (y :| ys)
-  x                  :| (y : ys) -> do
+  x :| (y : ys) -> do
     l <- node
     pure $ App l x (y :| ys)
 
@@ -100,33 +99,37 @@ exprs :: Parser (NonEmpty Expr)
 exprs = NE.some atom
 
 atom :: Parser Expr
-atom = choice
-  [ Var <$> node <*> var
-  , Constant <$> node <*> constant
-  , parens expr
-  , keyword "err" >> (Err <$> node <*> lexeme stringLiteral)
-  , keyword "fun" >> do
-    args <- NE.some ident <* symbol "->"
-    l    <- node
-    body <- binder args expr
-    return $ Lambda l body
-  , Parser.match
-  ]
+atom =
+  choice
+    [ Var <$> node <*> var,
+      Constant <$> node <*> constant,
+      parens expr,
+      keyword "err" >> (Err <$> node <*> lexeme stringLiteral),
+      keyword "fun" >> do
+        args <- NE.some ident <* symbol "->"
+        l <- node
+        body <- binder args expr
+        return $ Lambda l body,
+      Parser.match
+    ]
 
 match :: Parser Expr
 match = keyword "match" >> (Case <$> node <*> expr <*> many Parser.pattern)
 
 pattern :: Parser (Pattern Expr)
-pattern = symbol "|" >> choice
-  [ try $ do
-    tag  <- cons
-    args <- NE.some ident
-    symbol "->"
-    body <- binder args expr
-    return $ PatConstructor tag body
-  , PatConst <$> constant <*> (symbol "->" >> expr)
-  , PatWild <$> (symbol "_" >> symbol "->" >> expr)
-  ]
+pattern =
+  symbol "|" >> choice patterns
+  where
+    patterns =
+      [ try $ do
+          tag <- cons
+          args <- NE.some ident
+          symbol "->"
+          body <- binder args expr
+          return $ PatConstructor tag body,
+        PatConst <$> constant <*> (symbol "->" >> expr),
+        PatWild <$> (symbol "_" >> symbol "->" >> expr)
+      ]
 
 constant :: Parser Constant
 constant =
@@ -134,8 +137,8 @@ constant =
 
 program :: String -> Either String (Program Expr)
 program s = case e of
-  Left  err -> Left $ errorBundlePretty err
-  Right v   -> Right $ Program v m
- where
-  a      = runParserT (many topLevel <* eof) "stdin" s
-  (e, m) = runState (runReaderT a Map.empty) initMetadata
+  Left err -> Left $ errorBundlePretty err
+  Right v -> Right $ Program v m
+  where
+    a = runParserT (many topLevel <* eof) "stdin" s
+    (e, m) = runState (runReaderT a Map.empty) initMetadata
