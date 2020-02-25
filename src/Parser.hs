@@ -118,9 +118,8 @@ match = keyword "match" >> (Case <$> node <*> expr <*> many Parser.pattern)
 
 pattern :: Parser (Pattern Expr)
 pattern =
-  symbol "|" >> choice patterns
-  where
-    patterns =
+  symbol "|"
+    >> choice
       [ try $ do
           tag <- cons
           args <- NE.some ident

@@ -21,9 +21,9 @@ module Syntax.Anf where
 -- , fvsS
 -- )
 
+import Control.Category hiding ((.))
 import Control.Lens
 import Control.Monad.State
-import Data.Data
 import Data.Foldable (fold)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
@@ -35,12 +35,7 @@ import Data.Text.Prettyprint.Doc
 import Syntax.Base
 import qualified Syntax.Surface as S
 
-data Anf
-  = Anf
-      { _aLabel :: ELabel,
-        _aExpr :: ExprF Anf
-      }
-  deriving (Data, Typeable)
+data Anf = Anf {_aLabel :: ELabel, _aExpr :: ExprF Anf}
 
 data ExprF e
   = Err String
@@ -48,14 +43,14 @@ data ExprF e
   | Match (Atom e) [Pattern e]
   | Let e (Scope e)
   | Atom (Atom e)
-  deriving (Functor, Foldable, Traversable, Data, Typeable)
+  deriving (Functor, Foldable, Traversable)
 
 data Atom e
   = Var Var
   | Constant Constant
   | Lambda (Scope e)
   | CApp Tag (NonEmpty (Atom e))
-  deriving (Functor, Foldable, Traversable, Data, Typeable)
+  deriving (Functor, Foldable, Traversable)
 
 $(makePrisms ''ExprF)
 
@@ -63,11 +58,18 @@ $(makePrisms ''Atom)
 
 $(makeLenses ''Anf)
 
-instance Plated Anf
+instance Show Anf where
+  show = toSurfaceE >>> S.pprintExpr
 
-instance (Data e, Plated e) => Plated (ExprF e)
+eAtoms :: Traversal' (ExprF Anf) (Atom Anf)
+eAtoms f e = case e of
+  App a xs -> App <$> f a <*> traverse f xs
+  Match a ps -> Match <$> f a <*> pure ps
+  Atom a -> Atom <$> f a
+  _ -> pure e
 
-instance (Data e, Plated e) => Plated (Atom e)
+transformAnf :: Monad m => (Anf -> m Anf) -> Anf -> m Anf
+transformAnf f = mapMOf aExpr (traverse (transformAnf f)) >=> f
 
 unExpr :: Anf -> ExprF Anf
 unExpr (Anf _ e) = e
@@ -92,6 +94,7 @@ fvs (Anf _ e) = case e of
   (Match a ps) -> fvsA a <> foldMap fvsP ps
   (Let e s) -> fvs e <> fvsS s
   (Atom a) -> fvsA a
+  _ -> Set.empty 
 
 fvsA :: Atom Anf -> Set Var
 fvsA (Var v) = Set.singleton v

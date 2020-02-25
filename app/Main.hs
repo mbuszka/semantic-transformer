@@ -14,6 +14,7 @@ import qualified Syntax.Anf as Anf
 import qualified Syntax.Denormalized as D
 import Syntax.Surface
 import qualified Transform.Cps as Cps
+import Transform.Defun
 
 data Repl = Repl {file :: String}
 
@@ -51,7 +52,11 @@ main = do
         vsep
           (pretty <$> Map.toList s)
       putStrLn "Cps transformed"
-      putStrLn . pprintPgm . Anf.toSurface . Cps.program $ anf
+      let cps = Cps.program anf
+          (def, st) = transform cps
+      putStrLn . pprintPgm . Anf.toSurface $ def
+      print st
+
 -- putStrLn "\nCps transformed"
 -- let cpsDefs = map Cps.top defs
 -- mapM_ (\x -> pprintLn x >> putChar '\n') cpsDefs

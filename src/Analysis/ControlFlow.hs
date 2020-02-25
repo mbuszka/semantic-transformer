@@ -111,8 +111,8 @@ drive p s@(State cs vs ks) =
 
 run :: Denormalized -> State
 run p@(Denormalized es ds) =
-  let main = ds Map.! (Global "main")
-      vs = (Set.singleton . Closure) <$> ds
+  let main = ds Map.! "main"
+      vs = Set.singleton . Closure <$> Map.mapKeys Global ds
       (l, vs') = enter main vals (Store vs)
    in drive p $ State (Set.singleton $ Conf l Nil) vs' mempty
 

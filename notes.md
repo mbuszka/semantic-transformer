@@ -17,7 +17,6 @@ Pipeline:
   transformation
 
 
-
 defunctionalization:
   - find all lambdas and name their constructors
   - for every distinct set of functions at call site:
@@ -25,4 +24,15 @@ defunctionalization:
       appropriate body of lambda in each case
   - for every call site:
     - if known function call, leave as is
-    - otherwise replace with a call to apply function, passing 
+    - otherwise replace with a call to apply function, passing
+
+Values:
+  - Closures
+  - Function pointers (top-level)
+  - Numbers
+  - Strings
+  - Records with tags
+
+Surface syntax:
+  - Applicative style language with pattern matches
+  
