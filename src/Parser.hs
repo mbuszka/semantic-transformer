@@ -1,143 +1,105 @@
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Parser
-  ( program,
+  ( run,
   )
 where
 
-import Control.Applicative hiding
-  ( Const,
-    many,
-    some,
-  )
-import Control.Monad
-import qualified Control.Monad.Combinators.NonEmpty as NE
-import Control.Monad.Reader
-import Control.Monad.State
-import Data.Bifunctor
-import Data.Foldable
-import Data.List.NonEmpty (NonEmpty (..))
-import Data.Map (Map)
-import qualified Data.Map as Map
-import Data.Void
-import Syntax.Base
-import Syntax.Surface
-import Text.Megaparsec hiding
-  ( ELabel,
-    State (..),
-  )
+import Control.Monad.Writer
+import qualified Data.Char as Char
+import qualified Data.Text as T
+import qualified Data.Set as Set
+import Syntax
+import Text.Megaparsec hiding (State (..))
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
+import Text.Megaparsec.Debug
 
-type Parser a = ParsecT Void String (ReaderT Env (State Metadata)) a
+-- type Parser a = ParsecT Void Text (State Metadata) a
 
-type Env = Map String Var
+type Parser m = (MonadParsec Void Text m, MonadStx m)
 
-node :: Parser ELabel
-node = state nextLabel
+keywords = ["def", "@no-cps", "fun", "case", "let", "_"]
 
-withBindings :: SLabel -> NonEmpty String -> Env -> Env
-withBindings s xs e =
-  let vs = zip (toList xs) (map (Local s) [0 ..])
-   in Map.union (Map.fromList vs) e
-
-binder :: NonEmpty String -> Parser Expr -> Parser (Scope Expr)
-binder xs expr = do
-  s <- state $ nextScope (Just xs)
-  Scope s (length xs) <$> local (withBindings s xs) expr
-
-keywords :: [String]
-keywords = ["def", "fun", "err", "match"]
-
-symbol :: String -> Parser String
+symbol :: Parser m => Text -> m Text
 symbol = L.symbol space
 
-keyword :: String -> Parser String
-keyword s = lexeme $ try (string s <* notFollowedBy alphaNumChar)
-
-lexeme :: Parser a -> Parser a
+lexeme :: Parser m => m a -> m a
 lexeme = L.lexeme space
 
-parens :: Parser a -> Parser a
+keyword :: Parser m => Text -> m Text
+keyword s = lexeme $ try (string s <* notFollowedBy alphaNumChar)
+
+parens :: Parser m => m a -> m a
 parens = between (symbol "(") (symbol ")")
 
-ident :: Parser String
-ident =
-  try
-    $ mfilter (not . flip elem keywords)
-    $ lexeme
-    $ (:) <$> lowerChar <*> many alphaNumChar
+braces :: Parser m => m a -> m a
+braces = between (symbol "{") (symbol "}")
 
-var :: Parser Var
-var = do
-  s <- ident
-  e <- ask
-  return $ Map.findWithDefault (Global s) s e
-
-cons :: Parser Tag
-cons = lexeme $ MkTag <$> ((:) <$> upperChar <*> many alphaNumChar)
-
-topLevel :: Parser (Def Expr)
-topLevel = keyword "def" >> do
-  name <- ident
-  args <- NE.some ident <* symbol "->"
-  body <- binder args expr
-  return $ Def name body
-
-stringLiteral :: Parser String
-stringLiteral = lexeme $ char '\"' *> manyTill L.charLiteral (char '\"')
-
-expr :: Parser Expr
-expr = exprs >>= \case
-  x :| [] -> pure x
-  (Constant l (Tag c)) :| (y : ys) -> pure $ CApp l c (y :| ys)
-  x :| (y : ys) -> do
-    l <- node
-    pure $ App l x (y :| ys)
-
-exprs :: Parser (NonEmpty Expr)
-exprs = NE.some atom
-
-atom :: Parser Expr
-atom =
-  choice
-    [ Var <$> node <*> var,
-      Constant <$> node <*> constant,
-      parens expr,
-      keyword "err" >> (Err <$> node <*> lexeme stringLiteral),
-      keyword "fun" >> do
-        args <- NE.some ident <* symbol "->"
-        l <- node
-        body <- binder args expr
-        return $ Lambda l body,
-      Parser.match
-    ]
-
-match :: Parser Expr
-match = keyword "match" >> (Case <$> node <*> expr <*> many Parser.pattern)
-
-pattern :: Parser (Pattern Expr)
-pattern =
-  symbol "|"
-    >> choice
-      [ try $ do
-          tag <- cons
-          args <- NE.some ident
-          symbol "->"
-          body <- binder args expr
-          return $ PatConstructor tag body,
-        PatConst <$> constant <*> (symbol "->" >> expr),
-        PatWild <$> (symbol "_" >> symbol "->" >> expr)
-      ]
-
-constant :: Parser Constant
-constant =
-  choice [Int <$> lexeme L.decimal, String <$> stringLiteral, Tag <$> cons]
-
-program :: String -> Either String (Program Expr)
-program s = case e of
-  Left err -> Left $ errorBundlePretty err
-  Right v -> Right $ Program v m
+ident :: Parser m => m Text
+ident = mfilter (not . flip elem keywords) . lexeme $ txt
   where
-    a = runParserT (many topLevel <* eof) "stdin" s
-    (e, m) = runState (runReaderT a Map.empty) initMetadata
+    txt = takeWhile1P (Just "identifier") pred
+    pred '_' = True
+    pred '-' = True
+    pred c = Char.isLetter c
+
+var :: Parser m => m Var
+var = mkVar <$> ident
+
+parseTerm :: Parser m => m Term
+parseTerm = try (parens (choice exprs)) <|> try cons <|> v
+  where
+    v = mkTerm . Var =<< var
+    exprs = [abs, let', case', app]
+    abs = keyword "fun" >> do
+      xs <- parens (many var)
+      body <- parseTerm
+      mkTerm (Abs $ Scope xs body)
+    let' = keyword "let" >> do
+      v <- var
+      lhs <- parseTerm
+      rhs <- parseTerm
+      mkTerm (Let lhs (Scope [v] rhs))
+    app = mkTerm =<< liftA2 App parseTerm (many parseTerm)
+    case' = mkTerm =<< keyword "case" *> liftA2 Case parseTerm parsePatterns
+    cons = mkTerm =<< braces (liftA2 Cons ident (many parseTerm))
+
+parsePatterns :: Parser m => m (Patterns Term)
+parsePatterns = Patterns <$> many parseCase
+
+parseCase :: Parser m => m (Pattern (), Scope Term)
+parseCase = parens $ do
+  (p, xs) <- extractNames <$> pattern
+  t <- parseTerm
+  pure (p, Scope xs t)
+  where
+    pattern =
+      choice
+        [ braces (PCons <$> ident <*> many pattern),
+          keyword "_" >> pure PWild,
+          PVar . mkVar <$> ident
+        ]
+
+annot :: Parser m => m Annot
+annot = keyword "@no-cps" >> pure NoCps
+
+parseDef :: Parser m => m (Def Term)
+parseDef = parens $ do
+  x <- keyword "def" >> var
+  as <- Set.fromList <$> many annot
+  xs <- parens (many var)
+  t <- parseTerm
+  pure $ Def as x (Scope xs t)
+
+parseProgram :: Parser m => m (Program Term)
+parseProgram = Program <$> many parseDef
+
+run :: (Monad m, MonadStx m) => String -> Text -> m (Program Term)
+run f txt = do
+  e <- runParserT (parseProgram <* eof) f txt
+  case e of
+    Left err -> error . T.pack . errorBundlePretty $ err
+    Right t -> pure t

@@ -1,0 +1,207 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
+
+module Syntax
+  ( Annot (..),
+    Bound (..),
+    Def (..),
+    Label,
+    MonadStx,
+    Pattern (..),
+    Patterns (..),
+    Program (..),
+    Scope (..),
+    Term,
+    TermF (..),
+    Var,
+    extractNames,
+    freshVar,
+    label,
+    mkTerm,
+    mkVar,
+    runStx,
+    runStxT,
+    unTerm,
+  )
+where
+
+-- import qualified Abt as Abt
+-- import Abt (Bound, MonadStx, Scope(..), Var, freeVars, freshVar, mkTerm)
+import Control.Lens
+import qualified Data.Map as Map
+import qualified Data.Set as Set
+import Data.Text.Prettyprint.Doc
+import Data.Text.Prettyprint.Doc.Render.String
+
+newtype Program t = Program [Def t]
+
+data Def t = Def (Set Annot) Var (Scope t)
+  deriving (Functor, Foldable, Traversable)
+
+data Annot
+  = NoCps
+  deriving (Eq, Ord, Show)
+
+data TermF t
+  = Var Var
+  | Abs (Scope t)
+  | App t [t]
+  | Let t (Scope t)
+  | Case t (Patterns t)
+  | Cons Text [t]
+  deriving (Functor, Foldable, Traversable)
+
+data Pattern v
+  = PVar v
+  | PWild
+  | PCons Text [Pattern v]
+  deriving (Functor, Foldable)
+
+newtype Patterns t = Patterns [(Pattern (), Scope t)]
+  deriving (Functor, Foldable, Traversable)
+
+data Var = Source Text | Gen Int
+  deriving (Eq, Ord)
+
+data Scope t = Scope [Var] t
+  deriving (Eq, Ord, Functor, Foldable, Traversable)
+
+type MonadStx m = MonadState Metadata m
+
+newtype Label = Label {_unLabel :: Int}
+  deriving (Eq, Ord)
+
+data Fix f = Fix Label (Set Var) (f (Fix f))
+
+data Metadata
+  = Metadata
+      { _mdVar :: Int,
+        _mdLabel :: Label
+      }
+
+type Term = Fix TermF
+
+$(makeLenses ''Metadata)
+
+$(makeLenses ''Label)
+
+-- Handling of scoping rules
+class Bound t where
+  freeVars :: t -> Set Var
+
+instance Bound (Fix f) where
+  freeVars (Fix _ fvs _) = fvs
+
+instance Bound t => Bound (Scope t) where
+  freeVars (Scope vs t) = freeVars t Set.\\ Set.fromList vs
+
+instance Bound t => Bound (TermF t) where
+  freeVars t = case t of
+    Var v -> Set.singleton v
+    Abs s -> freeVars s
+    App f xs -> foldMap freeVars (f : xs)
+    Let t s -> freeVars t `Set.union` freeVars s
+    Case t ps -> freeVars t `Set.union` foldMap freeVars ps
+    Cons _ ts -> foldMap freeVars ts
+
+extractNames :: Pattern Var -> (Pattern (), [Var])
+extractNames p = (p $> (), toList p)
+
+insertNames :: Pattern a -> [Var] -> Pattern Var
+insertNames p vs = case go p vs of
+  (p, []) -> p
+  _ -> error "Mismatched variable count"
+  where
+    go (PVar _) (v : vs) = (PVar v, vs)
+    go PWild vs = (PWild, vs)
+    go (PCons c ps) vs = runState (PCons c <$> traverse (state . go) ps) vs
+
+runStxT :: Monad m => StateT Metadata m a -> m a
+runStxT a = evalStateT a initialMetadata
+
+runStx :: State Metadata a -> a
+runStx a = evalState a initialMetadata
+
+initialMetadata :: Metadata
+initialMetadata = Metadata 0 (Label 0)
+
+freshLabel :: MonadStx m => m Label
+freshLabel = do
+  lbl <- gets (view mdLabel)
+  mdLabel . unLabel %= (+ 1)
+  return lbl
+
+freshVar :: MonadStx m => m Var
+freshVar = do
+  x <- gets (view mdVar)
+  mdVar %= (+ 1)
+  return (Gen x)
+
+mkVar :: Text -> Var
+mkVar = Source
+
+mkTerm :: (Bound (f (Fix f)), MonadStx m) => f (Fix f) -> m (Fix f)
+mkTerm t = do
+  lbl <- freshLabel
+  return $ Fix lbl (freeVars t) t
+
+unTerm :: Fix f -> f (Fix f)
+unTerm (Fix _ _ t) = t
+
+label :: Fix f -> Label
+label (Fix l _ _) = l
+
+-- Pretty printing
+instance Pretty Label where
+  pretty (Label l) = pretty l
+
+instance Pretty Var where
+  pretty (Source v) = pretty v
+  pretty (Gen n) = "gen-" <> pretty n
+
+instance Pretty (f (Fix f)) => Pretty (Fix f) where
+  pretty (Fix _ _ t) = pretty t
+
+instance Pretty v => Pretty (Pattern v) where
+  pretty (PVar v) = pretty v
+  pretty PWild = "_"
+  pretty (PCons c ps) = braces (hsep (pretty c : map pretty ps))
+
+instance Pretty t => Pretty (TermF t) where
+  pretty = prettyTerm
+
+instance Pretty Annot where
+  pretty NoCps = "@no-cps"
+
+instance Pretty t => Pretty (Def t) where
+  pretty (Def ann v (Scope vs t)) =
+    parens $
+      "def" <+> pretty v <+> parens (hsep . map pretty $ vs)
+        <> nest 2 (line <> pretty t)
+
+instance Pretty t => Pretty (Program t) where
+  pretty (Program defs) =
+    encloseSep mempty mempty line (pretty <$> defs)
+
+instance Pretty t => Pretty (Patterns t) where
+  pretty (Patterns ps) = vsep . map pat $ ps
+    where
+      pat (p, Scope vs t) = parens (pretty (insertNames p vs) <+> pretty t)
+
+prettyTerm :: Pretty t => TermF t -> Doc ann
+prettyTerm t = case t of
+  Var v -> pretty v
+  Abs (Scope vs t) ->
+    parens ("fun" <+> parens (hsep . map pretty $ vs) <+> block (pretty t))
+  App f ts -> parens (pretty f <+> block (vsep . map pretty $ ts))
+  Let t (Scope [v] b) ->
+    parens ("let" <+> pretty v <+> nest 2 (sep [pretty t, pretty b]))
+  Cons c ts -> braces (pretty c <+> (block . vsep . map pretty $ ts))
+  Case t ps ->
+    parens ("case" <+> pretty t <> nest 2 (line <> pretty ps))
+  where
+    
+
+block :: Doc ann -> Doc ann
+block x = group $ flatAlt (nest 2 $ hardline <> x) x

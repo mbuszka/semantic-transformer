@@ -15,7 +15,7 @@ maintainer: maciej@buszka.eu
 dependencies:
 - text
 - containers
-- base >= 4.7 && < 5
+- base-noprelude >= 4.7 && < 5
 - megaparsec
 - parser-combinators
 - optparse-applicative
@@ -23,6 +23,19 @@ dependencies:
 - mtl
 - prettyprinter
 - lens
+- relude
+default-extensions:
+- BlockArguments
+- ConstraintKinds
+- DeriveFunctor
+- DeriveFoldable
+- DeriveTraversable
+- FlexibleContexts
+- LambdaCase
+- OverloadedStrings
+- StandaloneDeriving
+- TemplateHaskell
+- UndecidableInstances
 name: semt
 version: 0.1.0.0
 extra-source-files:

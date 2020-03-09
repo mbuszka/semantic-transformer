@@ -7,7 +7,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Syntax.Anf where
+module Old.Syntax.Anf where
 
 -- ( Atom(..)
 -- , Anf(..)
@@ -23,7 +23,6 @@ module Syntax.Anf where
 
 import Control.Category hiding ((.))
 import Control.Lens
-import Control.Monad.State
 import Data.Foldable (fold)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
@@ -32,8 +31,9 @@ import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text.Prettyprint.Doc
-import Syntax.Base
-import qualified Syntax.Surface as S
+import Old.Syntax.Base
+import qualified Old.Syntax.Surface as S
+import qualified Text.Show
 
 data Anf = Anf {_aLabel :: ELabel, _aExpr :: ExprF Anf}
 

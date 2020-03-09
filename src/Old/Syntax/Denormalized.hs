@@ -1,18 +1,17 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 
-module Syntax.Denormalized where
+module Old.Syntax.Denormalized where
 
 import Control.Lens
-import Control.Monad.State
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
-import Syntax.Anf hiding (M, expr)
-import Syntax.Base
-import qualified Syntax.Surface as S
+import Old.Syntax.Anf hiding (M, expr)
+import Old.Syntax.Base
+import qualified Old.Syntax.Surface as S
 
 type M a = State (Map ELabel Expr) a
 

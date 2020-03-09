@@ -4,7 +4,7 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Syntax.Base where
+module Old.Syntax.Base where
 
 import Control.Lens
 import Data.Data
@@ -72,12 +72,12 @@ instance Pretty ELabel where
   pretty (ELabel l) = pretty l
 
 instance Pretty Var where
-  pretty (Local idx b) = pretty idx <> pretty "#" <> pretty b
+  pretty (Local idx b) = pretty idx <> "#" <> pretty b
   pretty (Global str) = pretty str
 
 instance Pretty Constant where
   pretty (Int x) = pretty x
-  pretty (String x) = pretty (show x)
+  pretty (String x) = pretty (show x :: String)
   pretty (Tag c) = pretty c
 
 initMetadata :: Metadata

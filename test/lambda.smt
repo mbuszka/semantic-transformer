@@ -1,15 +1,15 @@
-def extend env k v ->
-  fun x -> match streq x k
-    | True -> v
-    | False -> env x
+(def extend (env k v)
+  (case (streq x k)
+    ({true} v)
+    ({false} (env x))))
 
-def eval env term ->
-  match term
-  | Var x -> env x
-  | Lam x body ->
-    fun v -> eval (extend env x v) body
-  | App f x -> (eval env f) (eval env x)
-  | Unit -> Unit
+(def eval (env term)
+  (case term
+    ({var x} (env x))
+    ({lam x body}
+      (fun (v) (eval (extend env x v) body)))
+    ({app f x} ((eval env f) (eval env x)))
+    ({unit} {unit})))
 
-def main term ->
-  eval (fun x -> err "empty env") term
+(def main (term)
+  (eval (fun (x) (err {empty})) term))

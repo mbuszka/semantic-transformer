@@ -2,18 +2,17 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Transform.Defun where
+module Old.Transform.Defun where
 
-import qualified Analysis.ControlFlow as Cfa
+import qualified Old.Analysis.ControlFlow as Cfa
 import Control.Lens
-import Control.Monad.State
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Syntax.Anf
-import Syntax.Base
+import Old.Syntax.Anf
+import Old.Syntax.Base
 
 data DefunState
   = DefunState

@@ -1,15 +1,15 @@
 {-# LANGUAGE RankNTypes #-}
 
-module Transform.Cps where
+module Old.Transform.Cps where
 
 import qualified Data.List.NonEmpty as NE
 import Data.List.NonEmpty (NonEmpty (..))
-import Syntax.Anf hiding
+import Old.Syntax.Anf hiding
   ( expr,
     program,
     scope,
   )
-import Syntax.Base
+import Old.Syntax.Base
 
 expr :: Atom Anf -> Anf -> Anf
 expr k (Anf l e) = case e of

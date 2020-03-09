@@ -1,4 +1,6 @@
-module Syntax.Surface
+{-# LANGUAGE NoOverloadedStrings #-}
+  
+module Old.Syntax.Surface
   ( Expr (..),
     pprintExpr,
     pprintPgm,
@@ -18,7 +20,7 @@ import Data.Text.Prettyprint.Doc
 import Data.Text.Prettyprint.Doc.Render.String
   ( renderString,
   )
-import Syntax.Base
+import Old.Syntax.Base
 
 data Expr
   = Var ELabel Var
