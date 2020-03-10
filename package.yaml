@@ -10,37 +10,41 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - semt
-
 copyright: Copyright (c) Maciej Buszka
-
 maintainer: maciej@buszka.eu
-
 dependencies:
-  - containers
-  - base >= 4.7 && < 5
-  - megaparsec
-  - parser-combinators
-  - optparse-applicative
-  - bound
-  - transformers
-  - mtl
-  - prettyprinter
-  - uniplate
-
+- text
+- containers
+- base-noprelude >= 4.7 && < 5
+- megaparsec
+- parser-combinators
+- optparse-applicative
+- transformers
+- mtl
+- prettyprinter
+- lens
+- relude
+- polysemy
+default-extensions:
+- BlockArguments
+- ConstraintKinds
+- DeriveFunctor
+- DeriveFoldable
+- DeriveTraversable
+- FlexibleContexts
+- LambdaCase
+- OverloadedStrings
+- StandaloneDeriving
+- TemplateHaskell
+- UndecidableInstances
 name: semt
-
 version: 0.1.0.0
-
 extra-source-files:
-  - README.md
-  - ChangeLog.md
-
+- README.md
+- ChangeLog.md
 author: Maciej Buszka
-
 github: mbuszka/semt
-
 license: BSD3
-
 executables:
   semt-exe:
     source-dirs: app

@@ -10,20 +10,23 @@
     (_ {true})))
 
 (def extend (env k v)
-  (fun (x)
-    (case (streq x k)
-      ({true} v)
-      ({false} (env x)))))
+  {extend env k v})
+
+(def lookup (env x)
+  (case env
+    ({extend env k v} 
+      (case (streq x k)
+        ({true} v)
+        ({false} (lookup env x))))
+    ({empty} error)))
 
 (def eval (env term)
   (case term
-    ({var x} (env x))
+    ({var x} (lookup env x))
     ({lam x body}
       (fun (v) (eval (extend env x v) body)))
     ({app f x} ((eval env f) (eval env x)))
     ({unit} {unit})))
 
-(def init (x) error)
-
 (def main (term)
-  (eval init term))
+  (eval {empty} term))

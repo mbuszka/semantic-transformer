@@ -1,186 +1,218 @@
-{-# LANGUAGE DeriveFoldable #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE RankNTypes #-}
 
 module Syntax
-  ( Cons(..)
-  , Const(..)
-  , Expr(..)
-  , Pattern(..)
-  , TopLevel(..)
-  , bind
-  , mapPattern
-  , unbind
-  , pprint
-  , pprintLn
+  ( Annot (..),
+    Bound (..),
+    DataDecl (..),
+    Def (..),
+    Label,
+    MonadStx,
+    Pattern (..),
+    Patterns (..),
+    Program (..),
+    Record (..),
+    Scope (..),
+    Term,
+    TermF (..),
+    Var,
+    extractNames,
+    freshVar,
+    freshLabel,
+    label,
+    mkTerm,
+    mkVar,
+    runStx,
+    runStxT,
+    unTerm,
+    insertNames,
   )
 where
 
-import           Bind
-import           Control.Monad.State
-import qualified Data.List                     as List
-import qualified Data.List.NonEmpty            as NE
-import           Data.List.NonEmpty             ( NonEmpty(..) )
-import qualified Data.Map                      as Map
-import           Data.Map                       ( Map )
-import           Data.Maybe
-import qualified Data.Set                      as Set
-import           Data.Set                       ( Set )
-import           Data.Text.Prettyprint.Doc
-import           Data.Text.Prettyprint.Doc.Render.String
-                                                ( renderString )
-import           Debug.Trace
+-- import qualified Abt as Abt
+-- import Abt (Bound, MonadStx, Scope(..), Var, freeVars, freshVar, mkTerm)
+import Control.Lens
+import qualified Data.Map as Map
+import qualified Data.Set as Set
+import Data.Text.Prettyprint.Doc
+import Data.Text.Prettyprint.Doc.Render.String
+import MyPrelude
+import Control.Monad.State
 
-newtype Cons = MkCons String deriving (Eq, Show)
-
-instance Pretty Cons where
-  pretty (MkCons s) = pretty s
-
-
-data Const = Int Int | String String | Cons Cons
-  deriving (Eq)
-
-instance Show Const where
-  show (Int    i         ) = show i
-  show (String s         ) = show s
-  show (Cons   (MkCons c)) = c
-
-instance Pretty Const where
-  pretty (Int    x) = pretty x
-  pretty (String x) = pretty (show x)
-  pretty (Cons   c) = pretty c
-
-
-data Pattern f a
-  = PatConst Const (f a)
-  | PatCons Cons (NonEmpty String) (Scope Int f a)
-  | PatWild (f a)
+data Program t = Program [Def t] DataDecl
   deriving (Functor, Foldable, Traversable)
 
-deriving instance (Show (f a), Show (f (Var Int a))) => Show (Pattern f a)
-
-instance Subst Pattern where
-  subst k (PatConst c e  ) = PatConst c (e >>= k)
-  subst k (PatCons t ns s) = PatCons t ns (subst k s)
-  subst k (PatWild e     ) = PatWild (e >>= k)
-
-
-type Bind a = Scope Int Expr a
-
-data Expr a
-  = Var a
-  | Const Const
-  | Err String
-  | Lambda (NonEmpty String) (Bind a)
-  | App (Expr a) (NonEmpty (Expr a))
-  | CApp Cons (NonEmpty (Expr a))
-  | Case (Expr a) [Pattern Expr a]
+data Def t = Def (Set Annot) Var (Scope t)
   deriving (Functor, Foldable, Traversable)
 
-deriving instance Show a => Show (Expr a)
+data Annot
+  = NoCps
+  deriving (Eq, Ord, Show)
 
-instance Applicative Expr where
-  pure  = Var
-  (<*>) = ap
+data DataDecl = DataDecl Text [Record]
 
-instance Monad Expr where
-  Var   a      >>= k = k a
-  Const c      >>= _ = Const c
-  Err   s      >>= _ = Err s
-  Lambda as b  >>= k = Lambda as (subst k b)
-  App    f  xs >>= k = App (f >>= k) (fmap (>>= k) xs)
-  CApp   c  xs >>= k = CApp c (fmap (>>= k) xs)
-  Case   e  ps >>= k = Case (e >>= k) (fmap (subst k) ps)
+data Record = Record Text [Text]
 
-instance Pretty a => Pretty (Expr a) where
-  pretty = prettyExpr NoParens . fmap pretty
+data TermF t
+  = Var Var
+  | Abs (Scope t)
+  | App t [t]
+  | Let t (Scope t)
+  | Case t (Patterns t)
+  | Cons Text [t]
+  | Error
+  deriving (Functor, Foldable, Traversable)
 
+data Pattern v
+  = PVar v
+  | PWild
+  | PCons Text [Pattern v]
+  deriving (Functor, Foldable, Eq, Ord)
 
-data TopLevel a = DefFun a (NonEmpty String) (Bind a)
-  deriving (Functor)
+newtype Patterns t = Patterns [(Pattern (), Scope t)]
+  deriving (Functor, Foldable, Traversable, Eq, Ord)
 
-instance Pretty a => Pretty (TopLevel a) where
-  pretty t = prettyTopLevel $ fmap pretty t
+data Var = Source Text | Gen Int
+  deriving (Eq, Ord)
 
--- Exported Functions --
+data Scope t = Scope [Var] t
+  deriving (Eq, Ord, Functor, Foldable, Traversable)
 
-bind :: Eq a => NonEmpty a -> Expr a -> Bind a
-bind args = abstract (elemIndex args)
+type MonadStx m = MonadState Metadata m
 
-unbind :: NonEmpty a -> Bind a -> Expr a
-unbind xs = instantiate (Var . (xs NE.!!))
+newtype Label = Label {_unLabel :: Int}
+  deriving (Eq, Ord)
 
-mapPattern :: (forall a . f a -> f a) -> Pattern f a -> Pattern f a
-mapPattern f (PatWild e             ) = PatWild (f e)
-mapPattern f (PatConst c e          ) = PatConst c (f e)
-mapPattern f (PatCons t ns (Scope e)) = PatCons t ns (Scope (f e))
+data Fix f = Fix Label (Set Var) (f (Fix f))
 
+data Metadata
+  = Metadata
+      { _mdVar :: Int,
+        _mdLabel :: Label
+      }
 
--- Pretty Printing Helpers --
+type Term = Fix TermF
 
-prettyPat :: Pattern Expr (Doc ann) -> Doc ann
-prettyPat (PatConst c e) =
-  pretty "|" <+> pretty c <+> pretty "->" <+> prettyExpr NoParens e
-prettyPat (PatCons t ns b) =
-  let ns' = fmap pretty ns
-  in  pretty "|"
-        <+> pretty t
-        <+> hsep (NE.toList ns')
-        <+> pretty "->"
-        <+> prettyExpr NoParens (unbind ns' b)
-prettyPat (PatWild e) =
-  pretty "|" <+> pretty "_" <+> pretty "->" <+> prettyExpr NoParens e
+$(makeLenses ''Metadata)
 
-prettyExpr :: Parenthesise -> Expr (Doc ann) -> Doc ann
-prettyExpr _ (Var   v) = v
-prettyExpr _ (Const c) = pretty c
-prettyExpr p (Err   e) = parenApp p $ pretty "err" <+> pretty (String e)
-prettyExpr p (Lambda names bind) =
-  parenLam p
-    $   pretty "fun"
-    <+> (hsep . fmap pretty . NE.toList) names
-    <+> pretty "->"
-    <+> block (prettyExpr NoParens (putNames names bind))
-prettyExpr p (App  f xs) = parenApp p $ prettyExpr ParenAll f <+> prettyApp xs
-prettyExpr p (CApp c xs) = parenApp p $ pretty c <+> prettyApp xs
-prettyExpr p (Case e ps) =
-  parenLam p $ pretty "match" <+> prettyExpr NoParens e <> hardline <> vsep ps'
-  where ps' = fmap prettyPat ps
+$(makeLenses ''Label)
 
-prettyApp (x      :| []) = prettyExpr ParenApp x
-prettyApp (x :| y :  ys) = prettyExpr ParenAll x <+> prettyApp (y :| ys)
+-- Handling of scoping rules
+class Bound t where
+  freeVars :: t -> Set Var
 
-data Parenthesise = NoParens | ParenApp | ParenAll
+instance Bound (Fix f) where
+  freeVars (Fix _ fvs _) = fvs
 
-parenApp NoParens = id
-parenApp _        = parens
+instance Bound t => Bound (Scope t) where
+  freeVars (Scope vs t) = freeVars t Set.\\ Set.fromList vs
 
-parenLam ParenAll = parens
-parenLam _        = id
+instance Bound t => Bound (TermF t) where
+  freeVars t = case t of
+    Var v -> Set.singleton v
+    Abs s -> freeVars s
+    App f xs -> foldMap freeVars (f : xs)
+    Let t s -> freeVars t `Set.union` freeVars s
+    Case t ps -> freeVars t `Set.union` foldMap freeVars ps
+    Cons _ ts -> foldMap freeVars ts
 
-putNames :: NonEmpty String -> Bind (Doc ann) -> Expr (Doc ann)
-putNames names = instantiate (fmap (Var . pretty) names NE.!!)
+extractNames :: Pattern Var -> (Pattern (), [Var])
+extractNames p = (p $> (), toList p)
 
-prettyTopLevel :: TopLevel (Doc a) -> Doc a
-prettyTopLevel (DefFun name args bind) =
-  pretty "def"
-    <+> name
-    <+> (hsep . fmap pretty . NE.toList) args
-    <+> pretty "->"
-    <+> block (prettyExpr NoParens (putNames args bind))
+insertNames :: Pattern a -> [Var] -> Pattern Var
+insertNames p vs = case go p vs of
+  (p, []) -> p
+  _ -> error "Mismatched variable count"
+  where
+    go (PVar _) (v : vs) = (PVar v, vs)
+    go PWild vs = (PWild, vs)
+    go (PCons c ps) vs = runState (PCons c <$> traverse (state . go) ps) vs
 
-elemIndex :: Eq a => NonEmpty a -> a -> Maybe Int
-elemIndex (x :| xs) y | x == y    = Just 0
-                      | otherwise = (+ 1) <$> List.elemIndex x xs
+runStxT :: Monad m => StateT Metadata m a -> m a
+runStxT a = evalStateT a initialMetadata
+
+runStx :: State Metadata a -> a
+runStx a = evalState a initialMetadata
+
+initialMetadata :: Metadata
+initialMetadata = Metadata 0 (Label 0)
+
+freshLabel :: MonadStx m => m Label
+freshLabel = do
+  lbl <- gets (view mdLabel)
+  mdLabel . unLabel %= (+ 1)
+  return lbl
+
+freshVar :: MonadStx m => m Var
+freshVar = do
+  x <- gets (view mdVar)
+  mdVar %= (+ 1)
+  return (Gen x)
+
+mkVar :: Text -> Var
+mkVar = Source
+
+mkTerm :: (Bound (f (Fix f)), MonadStx m) => f (Fix f) -> m (Fix f)
+mkTerm t = do
+  lbl <- freshLabel
+  return $ Fix lbl (freeVars t) t
+
+unTerm :: Fix f -> f (Fix f)
+unTerm (Fix _ _ t) = t
+
+label :: Fix f -> Label
+label (Fix l _ _) = l
+
+-- Pretty printing
+instance Pretty Label where
+  pretty (Label l) = pretty l
+
+instance Pretty Var where
+  pretty (Source v) = pretty v
+  pretty (Gen n) = "gen-" <> pretty n
+
+instance Pretty (f (Fix f)) => Pretty (Fix f) where
+  pretty (Fix lbl _ t) = pretty lbl <> "@" <> pretty t
+
+instance Pretty v => Pretty (Pattern v) where
+  pretty (PVar v) = pretty v
+  pretty PWild = "_"
+  pretty (PCons c ps) = braces (hsep (pretty c : map pretty ps))
+
+instance Pretty t => Pretty (TermF t) where
+  pretty = prettyTerm
+
+instance Pretty Annot where
+  pretty NoCps = "@no-cps"
+
+instance Pretty t => Pretty (Def t) where
+  pretty (Def ann v (Scope vs t)) =
+    parens $
+      "def" <+> pretty v <+> parens (hsep . map pretty $ vs)
+        <> nest 2 (line <> pretty t)
+
+instance Pretty t => Pretty (Program t) where
+  pretty (Program defs _) =
+    encloseSep mempty mempty line (pretty <$> defs)
+
+instance Pretty t => Pretty (Patterns t) where
+  pretty (Patterns ps) = vsep . map pat $ ps
+    where
+      pat (p, Scope vs t) = parens (pretty (insertNames p vs) <+> pretty t)
+
+prettyTerm :: Pretty t => TermF t -> Doc ann
+prettyTerm t = case t of
+  Var v -> pretty v
+  Abs (Scope vs t) ->
+    parens ("fun" <+> parens (hsep . map pretty $ vs) <+> block (pretty t))
+  App f ts -> parens (pretty f <+> block (vsep . map pretty $ ts))
+  Let t (Scope [v] b) ->
+    parens ("let" <+> pretty v <+> nest 2 (sep [pretty t, pretty b]))
+  Cons c ts -> braces (pretty c <+> (block . vsep . map pretty $ ts))
+  Case t ps ->
+    parens ("case" <+> pretty t <> nest 2 (line <> pretty ps))
+  Error -> "error"
 
 block :: Doc ann -> Doc ann
-block x = flatAlt x (nest 2 $ hardline <> x)
-
-pprint :: Pretty a => a -> String
-pprint = renderString . layoutSmart defaultLayoutOptions . pretty
-
-pprintLn :: Pretty a => a -> IO ()
-pprintLn = putStrLn . pprint
+block x = group $ flatAlt (nest 2 $ hardline <> x) x

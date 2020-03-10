@@ -1,14 +1,14 @@
 # Building the project
-The project is build using `stack`
+The project is built with `cabal`
 
-`stack build` -- to build
+`cabal build` -- to build
 
 # Running examples
-`stack run -- /path/to/definitions` -- starts a bare-bones repl with definitions from file
-
-I recommend wrapping it with `rlwrap` e.g `rlwrap stack run -- test/min-test.smt`
+`cabal run semt-exe -- /path/to/definitions` to perform control flow analysis and display intermediate representations
 
 # Example programs
-`test/min-test.smt` -- contains fib and fact functions
+`test/lambda.smt` -- minimal evaluator for λ-calculus
 
-`test/lambda.smt` -- contains minimal evaluator for λ-calculus
+`test/lambda-env.smt` -- evaluator with environments
+
+`test/unary.smt` -- addition of unary encoded numbers, currently hangs the analysis
