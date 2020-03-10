@@ -1,6 +1,7 @@
 module Cps where
 
 import Syntax
+import MyPrelude
 
 toCps :: MonadStx m => Term -> TermF Term -> m Term
 toCps t k = case unTerm t of
@@ -23,9 +24,10 @@ toCps t k = case unTerm t of
       ps' <- traverse (flip toCps (Var k')) ps
       mkTerm =<< liftA2 Let (mkTerm k) (Scope [k'] <$> mkTerm (Case t ps'))
   Cons c ts -> mkTerm =<< liftA2 App (mkTerm k) (traverse mkTerm [Cons c ts])
+  Error -> mkTerm Error
 
 fromAnf :: MonadStx m => Program Term -> m (Program Term)
-fromAnf (Program defs) = Program <$> traverse aux defs
+fromAnf (Program defs dt) = Program <$> traverse aux defs <*> pure dt
   where
     aux (Def as x (Scope xs t))
       | x == mkVar "main" = do

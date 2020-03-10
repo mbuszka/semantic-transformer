@@ -4,6 +4,8 @@ import Control.Monad.Except
 import qualified Data.Map as Map
 import Data.Text.Prettyprint.Doc
 import Syntax
+import MyPrelude
+import Control.Monad.Reader
 
 data Value
   = Struct Text [Value]
@@ -27,7 +29,7 @@ type Env = Map Var Value
 type MonadEval m = (MonadReader (Map Var (Scope Term)) m, MonadError Text m)
 
 run :: MonadError Text m => Program Term -> m Value
-run (Program defs) =
+run (Program defs _) =
   let defs' = Map.fromList $ map (\case Def _ x s -> (x, s)) defs
       Scope [] t = defs' Map.! mkVar "main"
    in runReaderT (eval Map.empty t []) defs'
@@ -82,11 +84,6 @@ continue v cont = case cont of
     eval env t $ EvalCons env c (v : vs) ts : ks
   [] -> pure v
 
-data CorruptedPattern = CorruptedPattern
-  deriving (Show)
-
-instance Exception CorruptedPattern
-
 evalCase ::
   MonadEval m =>
   Env ->
@@ -107,7 +104,7 @@ evalCase env v ps ks = case ps of
       | otherwise = Nothing
     aux [] [] [] env = Just env
     aux [] [] _ _ = Nothing
-    aux _ _ _ _ = bug CorruptedPattern
+    aux _ _ _ _ = error "Corrupted pattern"
 
 apply :: MonadEval m => Value -> [Value] -> [Cont] -> m Value
 apply f vs ks = do

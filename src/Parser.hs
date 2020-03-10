@@ -16,12 +16,13 @@ import Text.Megaparsec hiding (State (..))
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 import Text.Megaparsec.Debug
+import MyPrelude
 
 -- type Parser a = ParsecT Void Text (State Metadata) a
 
 type Parser m = (MonadParsec Void Text m, MonadStx m)
 
-keywords = ["def", "@no-cps", "fun", "case", "let", "_"]
+keywords = ["def", "@no-cps", "fun", "case", "let", "_", "def-data", "error"]
 
 symbol :: Parser m => Text -> m Text
 symbol = L.symbol space
@@ -50,7 +51,7 @@ var :: Parser m => m Var
 var = mkVar <$> ident
 
 parseTerm :: Parser m => m Term
-parseTerm = try (parens (choice exprs)) <|> try cons <|> v
+parseTerm = try (parens (choice exprs)) <|> try cons <|> err <|> v
   where
     v = mkTerm . Var =<< var
     exprs = [abs, let', case', app]
@@ -66,6 +67,7 @@ parseTerm = try (parens (choice exprs)) <|> try cons <|> v
     app = mkTerm =<< liftA2 App parseTerm (many parseTerm)
     case' = mkTerm =<< keyword "case" *> liftA2 Case parseTerm parsePatterns
     cons = mkTerm =<< braces (liftA2 Cons ident (many parseTerm))
+    err = keyword "error" >> mkTerm Error
 
 parsePatterns :: Parser m => m (Patterns Term)
 parsePatterns = Patterns <$> many parseCase
@@ -95,11 +97,26 @@ parseDef = parens $ do
   pure $ Def as x (Scope xs t)
 
 parseProgram :: Parser m => m (Program Term)
-parseProgram = Program <$> many parseDef
+parseProgram = do
+  dt <- parseData
+  defs <- many parseDef
+  pure $ Program defs dt
+
+parseData :: Parser m => m DataDecl
+parseData = parens $ do
+  name <- keyword "def-data" >> ident
+  records <- many parseRecord
+  pure $ DataDecl name records
+
+parseRecord :: Parser m => m Record
+parseRecord = braces $ do
+  name <- ident
+  elems <- many ident
+  pure $ Record name elems
 
 run :: (Monad m, MonadStx m) => String -> Text -> m (Program Term)
 run f txt = do
   e <- runParserT (parseProgram <* eof) f txt
   case e of
-    Left err -> error . T.pack . errorBundlePretty $ err
+    Left err -> error . errorBundlePretty $ err
     Right t -> pure t

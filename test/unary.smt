@@ -1,3 +1,5 @@
+(def-data data)
+
 (def zero () {zero})
 
 (def succ (n) {succ n})

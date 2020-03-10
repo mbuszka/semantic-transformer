@@ -24,6 +24,7 @@ dependencies:
 - prettyprinter
 - lens
 - relude
+- polysemy
 default-extensions:
 - BlockArguments
 - ConstraintKinds

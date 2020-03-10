@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module Main where
 
 import qualified Anf
@@ -8,40 +6,53 @@ import qualified Eval
 import Data.Text.Prettyprint.Doc
 import Data.Text.Prettyprint.Doc.Render.Text
 import qualified Parser
+import qualified Data.Text as Text
+import qualified Data.Text.IO as Text
 import Syntax
 import Control.Monad.Except
+import MyPrelude
+import qualified Cfa
+import System.Environment (getArgs)
+
 
 main :: IO ()
-main = return ()
+main = do
+  [file] <- getArgs
+  run file
 
 run :: String -> IO ()
 run f = do
   res <- runExceptT . runStxT . test $ f
   case res of
-    Left err -> putTextLn err
+    Left err -> Text.putStrLn err
     Right () -> pure ()
+
+putTextLn :: MonadIO m => Text -> m ()
+putTextLn = liftIO . Text.putStrLn
 
 test :: (MonadStx m, MonadIO m, MonadError Text m) => String -> m ()
 test file = do
-  pgm <- readFileText file
+  pgm <- liftIO $ Text.readFile file
   putTextLn "File read"
-  let p = runStx . Parser.run file $ pgm
-  seq p (putStrLn "Parsed program")
+  p <- Parser.run file $ pgm
+  seq p (liftIO $ putStrLn "Parsed program")
   pprint p
-  pRes <- Eval.run p
-  pprint pRes
+  Cfa.analyse p >>= pprint
+  -- pRes <- Eval.run p
+  -- pprint pRes
   anf <- Anf.fromSource p
   putTextLn "Transformed to ANF"
   pprint anf
-  anfRes <- Eval.run anf
-  pprint anfRes
+  -- anfRes <- Eval.run anf
+  -- pprint anfRes
   cps <- Cps.fromAnf anf
   putTextLn "Transformed to CPS"
   pprint cps
-  cpsRes <- Eval.run cps
-  pprint cpsRes
-  if cpsRes == anfRes && anfRes == pRes
-  then pure ()
-  else throwError "Mismatched results"
+  Cfa.analyse cps >>= pprint
+  -- cpsRes <- Eval.run cps
+  -- pprint cpsRes
+  -- if cpsRes == anfRes && anfRes == pRes
+  -- then pure ()
+  -- else throwError "Mismatched results"
   
 

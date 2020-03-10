@@ -5,24 +5,28 @@
 module Syntax
   ( Annot (..),
     Bound (..),
+    DataDecl (..),
     Def (..),
     Label,
     MonadStx,
     Pattern (..),
     Patterns (..),
     Program (..),
+    Record (..),
     Scope (..),
     Term,
     TermF (..),
     Var,
     extractNames,
     freshVar,
+    freshLabel,
     label,
     mkTerm,
     mkVar,
     runStx,
     runStxT,
     unTerm,
+    insertNames,
   )
 where
 
@@ -33,8 +37,11 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Data.Text.Prettyprint.Doc
 import Data.Text.Prettyprint.Doc.Render.String
+import MyPrelude
+import Control.Monad.State
 
-newtype Program t = Program [Def t]
+data Program t = Program [Def t] DataDecl
+  deriving (Functor, Foldable, Traversable)
 
 data Def t = Def (Set Annot) Var (Scope t)
   deriving (Functor, Foldable, Traversable)
@@ -43,6 +50,10 @@ data Annot
   = NoCps
   deriving (Eq, Ord, Show)
 
+data DataDecl = DataDecl Text [Record]
+
+data Record = Record Text [Text]
+
 data TermF t
   = Var Var
   | Abs (Scope t)
@@ -50,16 +61,17 @@ data TermF t
   | Let t (Scope t)
   | Case t (Patterns t)
   | Cons Text [t]
+  | Error
   deriving (Functor, Foldable, Traversable)
 
 data Pattern v
   = PVar v
   | PWild
   | PCons Text [Pattern v]
-  deriving (Functor, Foldable)
+  deriving (Functor, Foldable, Eq, Ord)
 
 newtype Patterns t = Patterns [(Pattern (), Scope t)]
-  deriving (Functor, Foldable, Traversable)
+  deriving (Functor, Foldable, Traversable, Eq, Ord)
 
 data Var = Source Text | Gen Int
   deriving (Eq, Ord)
@@ -161,7 +173,7 @@ instance Pretty Var where
   pretty (Gen n) = "gen-" <> pretty n
 
 instance Pretty (f (Fix f)) => Pretty (Fix f) where
-  pretty (Fix _ _ t) = pretty t
+  pretty (Fix lbl _ t) = pretty lbl <> "@" <> pretty t
 
 instance Pretty v => Pretty (Pattern v) where
   pretty (PVar v) = pretty v
@@ -181,7 +193,7 @@ instance Pretty t => Pretty (Def t) where
         <> nest 2 (line <> pretty t)
 
 instance Pretty t => Pretty (Program t) where
-  pretty (Program defs) =
+  pretty (Program defs _) =
     encloseSep mempty mempty line (pretty <$> defs)
 
 instance Pretty t => Pretty (Patterns t) where
@@ -200,8 +212,7 @@ prettyTerm t = case t of
   Cons c ts -> braces (pretty c <+> (block . vsep . map pretty $ ts))
   Case t ps ->
     parens ("case" <+> pretty t <> nest 2 (line <> pretty ps))
-  where
-    
+  Error -> "error"
 
 block :: Doc ann -> Doc ann
 block x = group $ flatAlt (nest 2 $ hardline <> x) x

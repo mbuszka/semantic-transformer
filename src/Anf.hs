@@ -1,6 +1,7 @@
 module Anf (fromSource) where
 
 import Syntax
+import MyPrelude
 
 data Anf = Atom Term | Expr Term
 
@@ -34,6 +35,7 @@ toAnf t = case unTerm t of
   Cons c ts -> seqAnf ts [] (atom . Cons c)
   Case t cs ->
     atomic t (\t -> expr . Case t =<< traverse toAnf' cs)
+  Error -> expr Error
 
 toAnfS :: MonadStx m => Scope Term -> m (Scope Term)
 toAnfS (Scope xs t) = Scope xs <$> toAnf' t
@@ -43,4 +45,4 @@ seqAnf [] acc k = k (reverse acc)
 seqAnf (t : ts) acc k = atomic t (\t -> seqAnf ts (t : acc) k)
 
 fromSource :: MonadStx m => Program Term -> m (Program Term)
-fromSource (Program defs) = Program <$> traverse (traverse toAnf') defs
+fromSource = traverse toAnf'
