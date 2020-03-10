@@ -1,81 +1,58 @@
 module Main where
 
-import qualified Analysis.ControlFlow as Cfa
-import Control.Monad.State.Lazy
-import Data.Bifunctor
-import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.Map as Map
-import qualified Data.Set as Set
+import qualified Anf
+import qualified Cps
+import qualified Eval
 import Data.Text.Prettyprint.Doc
-import Data.Text.Prettyprint.Doc.Render.String
-import Options.Applicative
-import Parser
-import qualified Syntax.Anf as Anf
-import qualified Syntax.Denormalized as D
-import Syntax.Surface
-import qualified Transform.Cps as Cps
-import Transform.Defun
+import Data.Text.Prettyprint.Doc.Render.Text
+import qualified Parser
+import qualified Data.Text as Text
+import qualified Data.Text.IO as Text
+import Syntax
+import Control.Monad.Except
+import MyPrelude
+import qualified Cfa
+import System.Environment (getArgs)
 
-data Repl = Repl {file :: String}
-
-replParser :: Parser Repl
-replParser = Repl <$> argument str (metavar "DEFNS")
-
-opts =
-  info
-    (replParser <**> helper)
-    ( fullDesc
-        <> progDesc "Process definitions in file DEFNS"
-        <> header "semt -- a semantic transformer"
-    )
-
-instance Pretty a => Pretty (Set.Set a) where
-  pretty = group . vsep . fmap pretty . Set.toList
 
 main :: IO ()
 main = do
-  Repl file <- execParser opts
-  pgm <- readFile file
-  case program pgm of
-    Left err -> putStrLn err
-    Right p -> do
-      putStrLn "Loaded definitions:"
-      putStrLn $ pprintPgm p
-      let anf = Anf.fromSurface p
-          back = Anf.toSurface anf
-      putStrLn "A-normal form:"
-      putStrLn $ pprintPgm back
-      let den = D.program anf
-          s = Cfa.appClosures den
-      putStrLn "Results of analysis"
-      putStrLn $ renderString . layoutSmart defaultLayoutOptions $
-        vsep
-          (pretty <$> Map.toList s)
-      putStrLn "Cps transformed"
-      let cps = Cps.program anf
-          (def, st) = transform cps
-      putStrLn . pprintPgm . Anf.toSurface $ def
-      print st
+  [file] <- getArgs
+  run file
 
--- putStrLn "\nCps transformed"
--- let cpsDefs = map Cps.top defs
--- mapM_ (\x -> pprintLn x >> putChar '\n') cpsDefs
--- putStrLn "Awaiting input"
--- step (buildEnv initial defs) (buildEnv (Cps.env initial) cpsDefs)
+run :: String -> IO ()
+run f = do
+  res <- runExceptT . runStxT . test $ f
+  case res of
+    Left err -> Text.putStrLn err
+    Right () -> pure ()
 
--- step :: Env -> Env -> IO ()
--- step env cpsEnv = do
---   putStr ">>> "
---   s <- getLine
---   case parseRepl s of
---     Left  err  -> putStrLn err
---     Right expr -> do
---       putStrLn "echo"
---       putStrLn . pprint $ expr
---       let cps = Cps.repl expr
---       let res = eval env expr pure
---       print res
---       putStrLn "cps"
---       putStrLn . pprint $ cps
---       print $ eval cpsEnv cps pure
---       step env cpsEnv
+putTextLn :: MonadIO m => Text -> m ()
+putTextLn = liftIO . Text.putStrLn
+
+test :: (MonadStx m, MonadIO m, MonadError Text m) => String -> m ()
+test file = do
+  pgm <- liftIO $ Text.readFile file
+  putTextLn "File read"
+  p <- Parser.run file $ pgm
+  seq p (liftIO $ putStrLn "Parsed program")
+  pprint p
+  Cfa.analyse p >>= pprint
+  -- pRes <- Eval.run p
+  -- pprint pRes
+  anf <- Anf.fromSource p
+  putTextLn "Transformed to ANF"
+  pprint anf
+  -- anfRes <- Eval.run anf
+  -- pprint anfRes
+  cps <- Cps.fromAnf anf
+  putTextLn "Transformed to CPS"
+  pprint cps
+  Cfa.analyse cps >>= pprint
+  -- cpsRes <- Eval.run cps
+  -- pprint cpsRes
+  -- if cpsRes == anfRes && anfRes == pRes
+  -- then pure ()
+  -- else throwError "Mismatched results"
+  
+

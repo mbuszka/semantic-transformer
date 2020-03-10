@@ -1,111 +1,124 @@
-{-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE LambdaCase #-}
-
 module Eval where
 
--- import           Bind
--- import Control.Monad ((>=>))
--- import           Data.Foldable
--- import           Data.List.NonEmpty             ( NonEmpty(..) )
--- import qualified Data.List.NonEmpty            as NE
--- import           Data.Map                       ( Map )
--- import qualified Data.Map                      as Map
--- import qualified Data.Set                      as Set
--- import           Data.Text.Prettyprint.Doc      ( pretty )
--- import           Debug.Trace
--- import           Syntax
+import Control.Monad.Except
+import qualified Data.Map as Map
+import Data.Text.Prettyprint.Doc
+import Syntax
+import MyPrelude
+import Control.Monad.Reader
 
--- type Env = Map String Value
+data Value
+  = Struct Text [Value]
+  | Closure Env (Scope Term)
+  | TopLevel Var
 
--- type EvalM a = Either String a
+instance Eq Value where
+  Struct c vs == Struct d ws = c == d && vs == ws
+  TopLevel v == TopLevel w = v == w
+  _ == _ = False
 
--- data Value
---   = Closure (NonEmpty String) (Expr String) Env
---   | PrimOp (NonEmpty Value -> EvalM Value)
---   | VConst Const
---   | Struct Tag (NonEmpty Value)
+data Cont
+  = EvalFun Env [Term]
+  | EvalArgs Env Value [Value] [Term]
+  | EvalLet Env Var Term
+  | EvalCase Env (Patterns Term)
+  | EvalCons Env Text [Value] [Term]
 
--- instance Show Value where
---   show (Closure args body _) = "<closure>"
---   show (VConst c           ) = show c
---   show (Struct (MkTag name) vals) =
---     "(" ++ show name ++ " " ++ show vals ++ ")"
+type Env = Map Var Value
 
--- type Cont a = Value -> EvalM a
+type MonadEval m = (MonadReader (Map Var (Scope Term)) m, MonadError Text m)
 
--- eval :: Env -> Expr String -> Cont a -> EvalM a
--- eval env expr k = case expr of
---   Lambda bound body ->
---     k $ Closure bound (unbind bound body) (Map.restrictKeys env fvs)
---   App f args -> eval env f $ \case
---     Closure params body boundEnv -> if length params == length args
---       then evalArgs
---         env
---         args
---         []
---         (\vs ->
---           let
---             env' =
---               Map.union (Map.fromList . NE.toList $ params `NE.zip` vs) boundEnv
---           in  eval env' body k
---         )
---       else Left $ "Wrong argument count\n" ++ show (pretty expr)
---     PrimOp op -> evalArgs env args [] (op >=> k)
---     other     -> error $ show other
---   Case e ps -> eval env e \v -> evalCase env v ps k
---   CApp c xs -> evalArgs env xs [] \vs -> k $ Struct c vs
---   Var   v   -> k $ env Map.! v
---   Const c   -> k $ VConst c
---   Err   msg -> Left msg
---   where fvs = Set.fromList $ toList expr
+run :: MonadError Text m => Program Term -> m Value
+run (Program defs _) =
+  let defs' = Map.fromList $ map (\case Def _ x s -> (x, s)) defs
+      Scope [] t = defs' Map.! mkVar "main"
+   in runReaderT (eval Map.empty t []) defs'
 
--- evalArgs
---   :: Env
---   -> NonEmpty (Expr String)
---   -> [Value]
---   -> (NonEmpty Value -> EvalM a)
---   -> EvalM a
--- evalArgs env (e :| []) vals k = eval env e (\v -> k . NE.reverse $ v :| vals)
--- evalArgs env (e :| e' : exprs) vals k =
---   eval env e (\v -> evalArgs env (e' :| exprs) (v : vals) k)
+lookup :: MonadEval m => Env -> Var -> m Value
+lookup env x = case env Map.!? x of
+  Nothing -> do
+    tl <- asks (Map.lookup x)
+    case tl of
+      Nothing -> throwError $ "No binding for: " <> pshow x
+      Just _ -> pure $ TopLevel x
+  Just v -> pure v
 
--- evalCase :: Env -> Value -> [Pattern Expr String] -> Cont a -> EvalM a
--- evalCase env _ [] k = Left "No branch in case"
--- evalCase env (VConst a) (PatConst b e : ps) k | a == b = eval env e k
--- evalCase env (Struct t vs) (PatConstructor t' ns b : es) k | t == t' =
---   if length vs == length ns
---     then
---       let env' = (Map.fromList . toList) (NE.zip ns vs) `Map.union` env
---           e    = unbind ns b
---       in  eval env' e k
---     else Left $ "Wrong variable count: " ++ show (length ns)
--- evalCase env _ (PatWild e : ps) k = eval env e k
--- evalCase env v (_         : ps) k = evalCase env v ps k
+topLevel :: MonadEval m => Var -> m (Scope Term)
+topLevel x = do
+  s <- ask
+  case s Map.!? x of
+    Nothing -> throwError $ "Unknown top-level function: " <> pshow x
+    Just s -> pure s
 
--- initial :: Env
--- initial = Map.fromList
---   [ ( "add"
---     , PrimOp $ \case
---       VConst (Int a) :| [VConst (Int b)] -> pure . VConst . Int $ a + b
---     )
---   , ( "sub"
---     , PrimOp $ \case
---       VConst (Int a) :| [VConst (Int b)] -> pure . VConst . Int $ a - b
---     )
---   , ( "mul"
---     , PrimOp $ \case
---       VConst (Int a) :| [VConst (Int b)] -> pure . VConst . Int $ a * b
---     )
---   , ( "streq"
---     , PrimOp $ \case
---       VConst (String a) :| [VConst (String b)] ->
---         pure $ VConst (Tag (MkTag if a == b then "True" else "False"))
---     )
---   ]
+eval :: MonadEval m => Env -> Term -> [Cont] -> m Value
+eval env t cont = case unTerm t of
+  Var x -> do
+    v <- lookup env x
+    continue v cont
+  Abs s -> do
+    let clo = Closure (env `Map.restrictKeys` freeVars t) s
+    continue clo cont
+  App f xs -> eval env f (EvalFun env xs : cont)
+  Let t (Scope [x] b) -> eval env t (EvalLet env x b : cont)
+  Case t ps -> eval env t (EvalCase env ps : cont)
+  Cons c [] -> continue (Struct c []) cont
+  Cons c (t : ts) -> eval env t (EvalCons env c [] ts : cont)
 
--- buildEnv :: Env -> [TopLevel String] -> Env
--- buildEnv initial ts = let e = aux e initial ts in e
---  where
---   aux fin e [] = e
---   aux fin e ((DefFun name args body) : es) =
---     aux fin (Map.insert name (Closure args (unbind args body) fin) e) es
+continue :: MonadEval m => Value -> [Cont] -> m Value
+continue v cont = case cont of
+  EvalFun _ [] : ks ->
+    apply v [] ks
+  EvalFun env (t : ts) : ks ->
+    eval env t $ EvalArgs env v [] ts : ks
+  EvalArgs _ f vs [] : ks ->
+    apply f (reverse (v : vs)) ks
+  EvalArgs env f vs (t : ts) : ks ->
+    eval env t $ EvalArgs env f (v : vs) ts : ks
+  EvalLet env x t : ks ->
+    eval (Map.insert x v env) t ks
+  EvalCase env (Patterns ps) : ks ->
+    evalCase env v ps ks
+  EvalCons env c vs [] : ks ->
+    continue (Struct c (reverse (v : vs))) ks
+  EvalCons env c vs (t : ts) : ks ->
+    eval env t $ EvalCons env c (v : vs) ts : ks
+  [] -> pure v
+
+evalCase ::
+  MonadEval m =>
+  Env ->
+  Value ->
+  [(Pattern (), Scope Term)] ->
+  [Cont] ->
+  m Value
+evalCase env v ps ks = case ps of
+  [] -> throwError "Non-exhaustive pattern match"
+  (p, Scope xs t) : ps -> case aux [p] xs [v] env of
+    Nothing -> evalCase env v ps ks
+    Just env -> eval env t ks
+  where
+    aux (PVar () : ps) (x : xs) (v : vs) env = aux ps xs vs (Map.insert x v env)
+    aux (PWild : ps) xs (_ : vs) env = aux ps xs vs env
+    aux (PCons c ps' : ps) xs (Struct c' vs' : vs) env
+      | c == c' = aux (ps' <> ps) xs (vs' <> vs) env
+      | otherwise = Nothing
+    aux [] [] [] env = Just env
+    aux [] [] _ _ = Nothing
+    aux _ _ _ _ = error "Corrupted pattern"
+
+apply :: MonadEval m => Value -> [Value] -> [Cont] -> m Value
+apply f vs ks = do
+  (env, Scope xs t) <- case f of
+    Closure env s -> pure (env, s)
+    TopLevel x -> do
+      s <- topLevel x
+      pure (Map.empty, s)
+    _ -> throwError "Expected closure or top-level function"
+  if length xs == length vs
+    then eval (Map.fromList (xs `zip` vs) `Map.union` env) t ks
+    else throwError "Wrong argument count in application"
+
+instance Pretty Value where
+  pretty (Struct c vs) = braces (hsep $ pretty c : map pretty vs)
+  pretty (Closure _ s) = "<closure>"
+  pretty (TopLevel x) = "<function:" <+> pretty x <> ">"
