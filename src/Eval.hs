@@ -53,7 +53,7 @@ topLevel x = do
 eval :: MonadEval m => Env -> Term -> [Cont] -> m Value
 eval env t cont = case unTerm t of
   Var x -> do
-    v <- lookup env x
+    v <- Eval.lookup env x
     continue v cont
   Abs s -> do
     let clo = Closure (env `Map.restrictKeys` freeVars t) s
