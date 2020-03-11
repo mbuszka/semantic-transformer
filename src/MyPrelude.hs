@@ -17,6 +17,7 @@ import Data.Text.Prettyprint.Doc
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Void as X (Void)
 import Prelude as X hiding (lookup)
+import Control.Monad as X ((<=<), (>=>))
 
 pprint :: (MonadIO m, Pretty a) => a -> m ()
 pprint = liftIO . Text.putStrLn . pshow

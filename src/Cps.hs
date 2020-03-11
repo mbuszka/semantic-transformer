@@ -23,7 +23,7 @@ toCps t k = case unTerm t of
       k' <- freshVar
       ps' <- traverse (flip toCps (Var k')) ps
       mkTerm =<< liftA2 Let (mkTerm k) (Scope [k'] <$> mkTerm (Case t ps'))
-  Cons c ts -> mkTerm =<< liftA2 App (mkTerm k) (traverse mkTerm [Cons c ts])
+  Cons r -> mkTerm =<< liftA2 App (mkTerm k) (traverse mkTerm [Cons r])
   Error -> mkTerm Error
 
 fromAnf :: MonadStx m => Program Term -> m (Program Term)

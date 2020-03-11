@@ -14,6 +14,7 @@ module Syntax
     Program (..),
     Record (..),
     Scope (..),
+    Tag (..),
     Term,
     TermF (..),
     Var,
@@ -33,10 +34,8 @@ where
 -- import qualified Abt as Abt
 -- import Abt (Bound, MonadStx, Scope(..), Var, freeVars, freshVar, mkTerm)
 import Control.Lens
-import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Data.Text.Prettyprint.Doc
-import Data.Text.Prettyprint.Doc.Render.String
 import MyPrelude
 import Control.Monad.State
 
@@ -50,9 +49,10 @@ data Annot
   = NoCps
   deriving (Eq, Ord, Show)
 
-data DataDecl = DataDecl Text [Record]
+data DataDecl = DataDecl Text [Record Text]
 
-data Record = Record Text [Text]
+data Record t = Record Tag [t]
+  deriving (Eq, Ord, Functor, Foldable, Traversable)
 
 data TermF t
   = Var Var
@@ -60,20 +60,23 @@ data TermF t
   | App t [t]
   | Let t (Scope t)
   | Case t (Patterns t)
-  | Cons Text [t]
+  | Cons (Record t)
   | Error
   deriving (Functor, Foldable, Traversable)
 
 data Pattern v
   = PVar v
   | PWild
-  | PCons Text [Pattern v]
+  | PCons (Record (Pattern v))
   deriving (Functor, Foldable, Eq, Ord)
 
 newtype Patterns t = Patterns [(Pattern (), Scope t)]
   deriving (Functor, Foldable, Traversable, Eq, Ord)
 
 data Var = Source Text | Gen Int
+  deriving (Eq, Ord)
+
+data Tag = SrcTag Text | GenTag Label
   deriving (Eq, Ord)
 
 data Scope t = Scope [Var] t
@@ -108,6 +111,9 @@ instance Bound (Fix f) where
 instance Bound t => Bound (Scope t) where
   freeVars (Scope vs t) = freeVars t Set.\\ Set.fromList vs
 
+instance Bound t => Bound (Record t) where
+  freeVars (Record _ ts) = foldMap freeVars ts
+
 instance Bound t => Bound (TermF t) where
   freeVars t = case t of
     Var v -> Set.singleton v
@@ -115,7 +121,8 @@ instance Bound t => Bound (TermF t) where
     App f xs -> foldMap freeVars (f : xs)
     Let t s -> freeVars t `Set.union` freeVars s
     Case t ps -> freeVars t `Set.union` foldMap freeVars ps
-    Cons _ ts -> foldMap freeVars ts
+    Cons r -> freeVars r
+    Error -> Set.empty
 
 extractNames :: Pattern Var -> (Pattern (), [Var])
 extractNames p = (p $> (), toList p)
@@ -127,7 +134,7 @@ insertNames p vs = case go p vs of
   where
     go (PVar _) (v : vs) = (PVar v, vs)
     go PWild vs = (PWild, vs)
-    go (PCons c ps) vs = runState (PCons c <$> traverse (state . go) ps) vs
+    go (PCons r) vs = runState (PCons <$> traverse (state . go) r) vs
 
 runStxT :: Monad m => StateT Metadata m a -> m a
 runStxT a = evalStateT a initialMetadata
@@ -178,7 +185,7 @@ instance Pretty (f (Fix f)) => Pretty (Fix f) where
 instance Pretty v => Pretty (Pattern v) where
   pretty (PVar v) = pretty v
   pretty PWild = "_"
-  pretty (PCons c ps) = braces (hsep (pretty c : map pretty ps))
+  pretty (PCons r) = pretty r
 
 instance Pretty t => Pretty (TermF t) where
   pretty = prettyTerm
@@ -201,6 +208,13 @@ instance Pretty t => Pretty (Patterns t) where
     where
       pat (p, Scope vs t) = parens (pretty (insertNames p vs) <+> pretty t)
 
+instance Pretty t => Pretty (Record t) where
+  pretty (Record c ts) = encloseSep lbrace rbrace space (pretty c:map pretty ts)
+
+instance Pretty Tag where
+  pretty (SrcTag c) = pretty c
+  pretty (GenTag lbl) = "gen-" <> pretty lbl
+
 prettyTerm :: Pretty t => TermF t -> Doc ann
 prettyTerm t = case t of
   Var v -> pretty v
@@ -209,10 +223,11 @@ prettyTerm t = case t of
   App f ts -> parens (pretty f <+> block (vsep . map pretty $ ts))
   Let t (Scope [v] b) ->
     parens ("let" <+> pretty v <+> nest 2 (sep [pretty t, pretty b]))
-  Cons c ts -> braces (pretty c <+> (block . vsep . map pretty $ ts))
+  Cons r -> pretty r
   Case t ps ->
     parens ("case" <+> pretty t <> nest 2 (line <> pretty ps))
   Error -> "error"
+  _ -> error "Unexpected syntax"
 
 block :: Doc ann -> Doc ann
 block x = group $ flatAlt (nest 2 $ hardline <> x) x

@@ -47,6 +47,9 @@ ident = mfilter (not . flip elem keywords) . lexeme $ txt
     pred '-' = True
     pred c = Char.isLetter c
 
+tag :: Parser m => m Tag
+tag = SrcTag <$> ident
+
 var :: Parser m => m Var
 var = mkVar <$> ident
 
@@ -66,7 +69,7 @@ parseTerm = try (parens (choice exprs)) <|> try cons <|> err <|> v
       mkTerm (Let lhs (Scope [v] rhs))
     app = mkTerm =<< liftA2 App parseTerm (many parseTerm)
     case' = mkTerm =<< keyword "case" *> liftA2 Case parseTerm parsePatterns
-    cons = mkTerm =<< braces (liftA2 Cons ident (many parseTerm))
+    cons = mkTerm . Cons =<< parseRecord parseTerm
     err = keyword "error" >> mkTerm Error
 
 parsePatterns :: Parser m => m (Patterns Term)
@@ -80,7 +83,7 @@ parseCase = parens $ do
   where
     pattern =
       choice
-        [ braces (PCons <$> ident <*> many pattern),
+        [ PCons <$> parseRecord pattern,
           keyword "_" >> pure PWild,
           PVar . mkVar <$> ident
         ]
@@ -105,13 +108,13 @@ parseProgram = do
 parseData :: Parser m => m DataDecl
 parseData = parens $ do
   name <- keyword "def-data" >> ident
-  records <- many parseRecord
+  records <- many $ parseRecord ident
   pure $ DataDecl name records
 
-parseRecord :: Parser m => m Record
-parseRecord = braces $ do
-  name <- ident
-  elems <- many ident
+parseRecord :: Parser m => m a -> m (Record a)
+parseRecord elem = braces $ do
+  name <- tag
+  elems <- many elem
   pure $ Record name elems
 
 run :: (Monad m, MonadStx m) => String -> Text -> m (Program Term)

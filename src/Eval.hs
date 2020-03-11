@@ -8,7 +8,7 @@ import MyPrelude
 import Control.Monad.Reader
 
 data Value
-  = Struct Text [Value]
+  = Struct Tag [Value]
   | Closure Env (Scope Term)
   | TopLevel Var
 
@@ -22,7 +22,7 @@ data Cont
   | EvalArgs Env Value [Value] [Term]
   | EvalLet Env Var Term
   | EvalCase Env (Patterns Term)
-  | EvalCons Env Text [Value] [Term]
+  | EvalCons Env Tag [Value] [Term]
 
 type Env = Map Var Value
 
@@ -61,8 +61,8 @@ eval env t cont = case unTerm t of
   App f xs -> eval env f (EvalFun env xs : cont)
   Let t (Scope [x] b) -> eval env t (EvalLet env x b : cont)
   Case t ps -> eval env t (EvalCase env ps : cont)
-  Cons c [] -> continue (Struct c []) cont
-  Cons c (t : ts) -> eval env t (EvalCons env c [] ts : cont)
+  Cons (Record c []) -> continue (Struct c []) cont
+  Cons (Record c (t : ts)) -> eval env t (EvalCons env c [] ts : cont)
 
 continue :: MonadEval m => Value -> [Cont] -> m Value
 continue v cont = case cont of
@@ -99,7 +99,7 @@ evalCase env v ps ks = case ps of
   where
     aux (PVar () : ps) (x : xs) (v : vs) env = aux ps xs vs (Map.insert x v env)
     aux (PWild : ps) xs (_ : vs) env = aux ps xs vs env
-    aux (PCons c ps' : ps) xs (Struct c' vs' : vs) env
+    aux (PCons (Record c ps') : ps) xs (Struct c' vs' : vs) env
       | c == c' = aux (ps' <> ps) xs (vs' <> vs) env
       | otherwise = Nothing
     aux [] [] [] env = Just env

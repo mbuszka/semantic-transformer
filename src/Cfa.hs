@@ -22,7 +22,7 @@ import Control.Monad.IO.Class (MonadIO)
 data Value
   = Closure Label Env [Var] Label
   | TopLevel Var
-  | Struct Text [ValuePtr]
+  | Struct Tag [ValuePtr]
   | Str
   deriving (Eq, Ord)
 
@@ -41,7 +41,7 @@ newtype CacheDst = CacheDst Label deriving (Eq, Ord)
 
 data Cont
   = EvalApp Env [ValuePtr] [Label] CacheDst ContPtr
-  | EvalCons Label Text Env [ValuePtr] [Label] CacheDst ContPtr
+  | EvalCons Label Tag Env [ValuePtr] [Label] CacheDst ContPtr
   | EvalCase Env (Patterns Label) CacheDst ContPtr
   | Halt
   deriving (Eq, Ord)
@@ -133,10 +133,10 @@ eval env lbl k = term lbl >>= \case
           then insertV lbl (TopLevel x)
           else error $ "Unknown variable: " <> show (pretty x) <> " at " <> show (pretty lbl)
     pure $ Continue ptr k
-  Cons c [] -> do
+  Cons (Record c []) -> do
     ptr <- insertV lbl (Struct c [])
     pure $ Continue ptr k
-  Cons c (e : es) -> do
+  Cons (Record c (e : es)) -> do
     k' <- insertK e (EvalCons lbl c env [] es (CacheDst e) k)
     pure $ Eval env e k'
   Case e ps -> do
@@ -175,7 +175,7 @@ applyCases :: Effs sig m => Env -> ValuePtr -> Patterns Label -> ContPtr -> m Co
 applyCases env vPtr (Patterns ps) k =
   let aux env (PVar x : ps) (v : vs) = aux (Map.insert x v env) ps vs
       aux env (PWild : ps) (_ : vs) = aux env ps vs
-      aux env (PCons c ps' : ps) (v : vs) = derefV v >>= \case
+      aux env (PCons (Record c ps') : ps) (v : vs) = derefV v >>= \case
         Struct c' vs' -> do
           guard (c' == c)
           guard (length ps' == length vs')

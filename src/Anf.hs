@@ -32,7 +32,7 @@ toAnf t = case unTerm t of
   Abs s -> atom . Abs =<< toAnfS s
   App f ts -> atomic f (\f -> seqAnf ts [] (expr . App f))
   Let t s -> expr =<< liftA2 Let (toAnf' t) (toAnfS s)
-  Cons c ts -> seqAnf ts [] (atom . Cons c)
+  Cons (Record c ts) -> seqAnf ts [] (atom . Cons . Record c)
   Case t cs ->
     atomic t (\t -> expr . Case t =<< traverse toAnf' cs)
   Error -> expr Error
