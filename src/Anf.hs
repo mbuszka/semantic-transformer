@@ -1,48 +1,41 @@
-module Anf (fromSource) where
+module Anf (Anf(..), fromSource) where
 
 import Syntax
+import Syntax.Term
 import MyPrelude
+import Polysemy
+import Data.Text.Prettyprint.Doc
 
-data Anf = Atom Term | Expr Term
+data Anf
+  = Atom (TermF Anf)
+  | Expr (TermF Anf)
 
-unwrap :: Anf -> Term
-unwrap (Atom t) = t
-unwrap (Expr t) = t
-
-atomic :: MonadStx m => Term -> (Term -> m Anf) -> m Anf
+atomic :: Member FreshVar r => Term -> (Anf -> Sem r Anf) -> Sem r Anf
 atomic term k = toAnf term >>= \case
   Expr t -> do
     v <- freshVar
-    body <- k =<< mkTerm (Var v)
-    Expr <$> mkTerm (Let t (Scope [v] $ unwrap body))
-  Atom t -> k t
+    body <- k (Atom $ Var v)
+    pure . Expr . Let (Expr t) $ Scope [v] body
+  Atom t -> k (Atom t)
 
-atom :: MonadStx m => TermF Term -> m Anf
-atom t = Atom <$> mkTerm t
-
-expr :: MonadStx m => TermF Term -> m Anf
-expr t = Expr <$> mkTerm t
-
-toAnf' :: MonadStx m => Term -> m Term
-toAnf' t = unwrap <$> toAnf t
-
-toAnf :: MonadStx m => Term -> m Anf
+toAnf :: Member FreshVar r => Term -> Sem r Anf
 toAnf term = case unTerm term of
-  v@Var {} -> atom v
-  Abs s -> atom . Abs =<< toAnfS s
-  App f ts -> atomic f (\f' -> seqAnf ts [] (expr . App f'))
-  Let t s -> expr =<< liftA2 Let (toAnf' t) (toAnfS s)
-  Cons (Record c ts) -> seqAnf ts [] (atom . Cons . Record c)
+  Var v -> pure . Atom $ Var v
+  Abs s -> Atom . Abs <$> traverse toAnf s
+  App f ts -> atomic f (\f' -> seqAnf ts [] (pure . Expr . App f'))
+  Let t s -> Expr <$> liftA2 Let (toAnf t) (traverse toAnf s)
+  Cons (Record c ts) -> seqAnf ts [] (pure . Atom . Cons . Record c)
   Case t cs ->
-    atomic t (\t' -> expr . Case t' =<< traverse toAnf' cs)
-  Error -> expr Error
+    atomic t (\t' -> Expr . Case t' <$> traverse toAnf cs)
+  Error -> pure $ Expr Error
 
-toAnfS :: MonadStx m => Scope Term -> m (Scope Term)
-toAnfS (Scope xs t) = Scope xs <$> toAnf' t
-
-seqAnf :: MonadStx m => [Term] -> [Term] -> ([Term] -> m Anf) -> m Anf
+seqAnf :: Member FreshVar r => [Term] -> [Anf] -> ([Anf] -> Sem r Anf) -> Sem r Anf
 seqAnf [] acc k = k (reverse acc)
 seqAnf (t : ts) acc k = atomic t (\t' -> seqAnf ts (t' : acc) k)
 
-fromSource :: MonadStx m => Program Term -> m (Program Term)
-fromSource = traverse toAnf'
+fromSource :: Member FreshVar r => Program Term -> Sem r (Program Anf)
+fromSource = traverse toAnf
+
+instance Pretty Anf where
+  pretty (Atom t) = pretty t
+  pretty (Expr t) = pretty t

@@ -2,7 +2,6 @@ module Main where
 
 import qualified Anf
 import qualified Cps
--- import qualified Eval
 import qualified Parser
 import qualified Data.Text.IO as Text
 import Syntax
@@ -10,31 +9,28 @@ import Control.Monad.Except
 import MyPrelude
 import qualified Cfa
 import System.Environment (getArgs)
+import Polysemy
 
 
 main :: IO ()
 main = do
   [file] <- getArgs
-  run file
-
-run :: String -> IO ()
-run f = do
-  res <- runExceptT . runStxT . test $ f
-  case res of
-    Left err -> Text.putStrLn err
-    Right () -> pure ()
+  runTest file
 
 putTextLn :: MonadIO m => Text -> m ()
 putTextLn = liftIO . Text.putStrLn
 
-test :: (MonadStx m, MonadIO m, MonadError Text m) => String -> m ()
+runTest :: String -> IO ()
+runTest f = runM . runFreshVar . test $ f
+
+test :: Members '[Embed IO, FreshVar] r => String -> Sem r ()
 test file = do
   pgm <- liftIO $ Text.readFile file
   putTextLn "File read"
-  p <- Parser.run file $ pgm
+  let p = Parser.run file $ pgm
   seq p (liftIO $ putStrLn "Parsed program")
   pprint p
-  Cfa.analyse p >>= pprint
+  pprint $ Cfa.analyse p
   -- pRes <- Eval.run p
   -- pprint pRes
   anf <- Anf.fromSource p
@@ -45,7 +41,7 @@ test file = do
   cps <- Cps.fromAnf anf
   putTextLn "Transformed to CPS"
   pprint cps
-  Cfa.analyse cps >>= pprint
+  pprint $ Cfa.analyse cps
   -- cpsRes <- Eval.run cps
   -- pprint cpsRes
   -- if cpsRes == anfRes && anfRes == pRes

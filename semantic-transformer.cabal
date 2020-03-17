@@ -42,6 +42,7 @@ executable semt
     DeriveTraversable
     FlexibleContexts
     GADTs
+    GeneralizedNewtypeDeriving
     LambdaCase
     OverloadedStrings
     PolyKinds

@@ -1,41 +1,33 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE UndecidableInstances #-}
-
 module Syntax
   ( Annot (..),
     Bound (..),
     DataDecl (..),
     Def (..),
-    Label,
-    MonadStx,
+    FreshVar,
     Pattern (..),
     Patterns (..),
+    Pretty,
     Program (..),
     Record (..),
     Scope (..),
     Tag (..),
-    Term,
     TermF (..),
     Var,
     extractNames,
     freshVar,
-    freshLabel,
-    label,
-    mkTerm,
     mkVar,
-    runStx,
-    runStxT,
-    unTerm,
     insertNames,
+    runFreshVar,
   )
 where
 
 import Control.Lens
 import qualified Data.Set as Set
 import Data.Text.Prettyprint.Doc
+import Data.IORef
 import MyPrelude
 import Control.Monad.State
+import Polysemy
 
 data Program t = Program [Def t] DataDecl
   deriving (Functor, Foldable, Traversable)
@@ -71,40 +63,23 @@ data Pattern v
 newtype Patterns t = Patterns [(Pattern (), Scope t)]
   deriving (Functor, Foldable, Traversable, Eq, Ord)
 
-data Var = Source Text | Gen Int
+data Var = SrcVar Text | GenVar Int
   deriving (Eq, Ord)
 
-data Tag = SrcTag Text | GenTag Label
+data Tag = SrcTag Text | GenTag Int
   deriving (Eq, Ord)
 
 data Scope t = Scope [Var] t
   deriving (Eq, Ord, Functor, Foldable, Traversable)
 
-type MonadStx m = MonadState Metadata m
+data FreshVar m a where
+  FreshVar :: FreshVar m Var
 
-newtype Label = Label {_unLabel :: Int}
-  deriving (Eq, Ord)
-
-data Fix f = Fix Label (Set Var) (f (Fix f))
-
-data Metadata
-  = Metadata
-      { _mdVar :: Int,
-        _mdLabel :: Label
-      }
-
-type Term = Fix TermF
-
-$(makeLenses ''Metadata)
-
-$(makeLenses ''Label)
+$(makeSem ''FreshVar)
 
 -- Handling of scoping rules
 class Bound t where
   freeVars :: t -> Set Var
-
-instance Bound (Fix f) where
-  freeVars (Fix _ fvs _) = fvs
 
 instance Bound t => Bound (Scope t) where
   freeVars (Scope vs t) = freeVars t Set.\\ Set.fromList vs
@@ -122,8 +97,6 @@ instance Bound t => Bound (TermF t) where
     Cons r -> freeVars r
     Error -> Set.empty
 
-
-
 extractNames :: Pattern Var -> (Pattern (), [Var])
 extractNames p = (p $> (), toList p)
 
@@ -137,51 +110,25 @@ insertNames pattern variables = case go pattern variables of
     go PWild vs = (PWild, vs)
     go (PCons r) vs = runState (PCons <$> traverse (state . go) r) vs
 
-runStxT :: Monad m => StateT Metadata m a -> m a
-runStxT a = evalStateT a initialMetadata
+-- runStxT :: Monad m => StateT Metadata m a -> m a
+-- runStxT a = evalStateT a initialMetadata
 
-runStx :: State Metadata a -> a
-runStx a = evalState a initialMetadata
-
-initialMetadata :: Metadata
-initialMetadata = Metadata 0 (Label 0)
-
-freshLabel :: MonadStx m => m Label
-freshLabel = do
-  lbl <- gets (view mdLabel)
-  mdLabel . unLabel %= (+ 1)
-  return lbl
-
-freshVar :: MonadStx m => m Var
-freshVar = do
-  x <- gets (view mdVar)
-  mdVar %= (+ 1)
-  return (Gen x)
+runFreshVar :: Member (Embed IO) r => Sem (FreshVar ': r) a -> Sem r a
+runFreshVar sem = do
+  ref <- embed $ newIORef (0 :: Int)
+  interpret (\case
+    FreshVar -> do
+      x <- embed $ readIORef ref
+      embed $ writeIORef ref (x+1)
+      return (GenVar x)) sem
 
 mkVar :: Text -> Var
-mkVar = Source
-
-mkTerm :: (Bound (f (Fix f)), MonadStx m) => f (Fix f) -> m (Fix f)
-mkTerm t = do
-  lbl <- freshLabel
-  return $ Fix lbl (freeVars t) t
-
-unTerm :: Fix f -> f (Fix f)
-unTerm (Fix _ _ t) = t
-
-label :: Fix f -> Label
-label (Fix l _ _) = l
+mkVar = SrcVar
 
 -- Pretty printing
-instance Pretty Label where
-  pretty (Label l) = pretty l
-
 instance Pretty Var where
-  pretty (Source v) = pretty v
-  pretty (Gen n) = "gen-" <> pretty n
-
-instance Pretty (f (Fix f)) => Pretty (Fix f) where
-  pretty (Fix lbl _ t) = pretty lbl <> "@" <> pretty t
+  pretty (SrcVar v) = pretty v
+  pretty (GenVar n) = "gen-" <> pretty n
 
 instance Pretty v => Pretty (Pattern v) where
   pretty (PVar v) = pretty v

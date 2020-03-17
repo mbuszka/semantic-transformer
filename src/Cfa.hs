@@ -2,19 +2,21 @@
 
 module Cfa where
 
-import Control.Lens
 import Control.Applicative ((<|>), empty)
+import Control.Lens
 import Control.Monad (guard)
+import Control.Monad.IO.Class (MonadIO)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Data.Text.Prettyprint.Doc
 import MyPrelude
-import Syntax
-import Control.Monad.IO.Class (MonadIO)
 import Polysemy
-import Polysemy.State
-import Polysemy.Reader
 import Polysemy.NonDet
+import Polysemy.Reader
+import Polysemy.State
+import Syntax
+import Syntax.Labeled
+import qualified Syntax.Term as Tm
 
 data Value
   = Closure Label Env [Var] Label
@@ -52,7 +54,7 @@ data Store
 
 data Static
   = Static
-      { _terms :: Map Label (TermF Label),
+      { _terms :: Map Label Term,
         _topLevel :: Map Var (Scope Label)
       }
 
@@ -68,12 +70,6 @@ data Config
 type Res = (Store, Config)
 
 type Effs r = Members '[Reader Static, State Store, NonDet] r
-
-denormalise :: Member (State Static) r => Term -> Sem r Label
-denormalise t = do
-  t' <- traverse denormalise (unTerm t)
-  modify (terms %~ Map.insert (label t) t')
-  pure $ label t
 
 term :: Member (Reader Static) r => Label -> Sem r (TermF Label)
 term lbl = asks (view $ terms . at lbl) >>= \case
@@ -136,7 +132,7 @@ eval env lbl k = term lbl >>= \case
     k' <- insertK e (EvalCase env ps (CacheDst e) k)
     pure $ Eval env e k'
   Error -> empty
-  Let{} -> error "Not implemented yet"
+  Let {} -> error "Not implemented yet"
 
 continue :: Effs r => ValuePtr -> ContPtr -> Sem r Config
 continue vPtr kPtr = do
@@ -198,40 +194,44 @@ step static (store, confs) = (s, Set.fromList cs)
       Eval env e k -> eval env e k
       Continue v k -> continue v k
 
-analyse :: (MonadStx m, MonadIO m) => Program Term -> m (Map Label (Set Function))
-analyse p =
-  let (st, Program defs (DataDecl tpName records)) = run $ runState (Static Map.empty Map.empty) (traverse denormalise p)
-      static = st & topLevel .~ ts
-      ts = Map.fromList (map aux defs)
-      aux (Def _ x s) = (x, s)
-      Scope xs main = ts Map.! mkVar "main"
-      go s = let s' = step static s in if s == s' then s else go s'
-      build env rs = rs <&> \case Record n es -> Struct n (fmap (env Map.!) es)
-   in do
-        tpEnv <-
-          Map.fromList
-            <$> sequence
-              [ (tpName,) . ValuePtr <$> freshLabel,
-                ("string",) . ValuePtr <$> freshLabel
-              ]
-        pprint tpEnv
-        let elems = Set.fromList $ build tpEnv records
-            vStore =
-              Map.fromList
-                [ (tpEnv Map.! tpName, elems),
-                  (tpEnv Map.! "string", Set.singleton Str)
-                ]
-            kStore = Map.singleton (ContPtr main) (Set.singleton Halt)
-            store = Store vStore kStore
-            env = Map.fromList (xs `zip` [tpEnv Map.! tpName])
-            conf = Set.singleton (Eval env main (ContPtr main))
-            (Store vals _, _) = go (store, conf)
-            t (ValuePtr lbl, vs) = (lbl, Set.fromList . concatMap (\case
-              TopLevel x -> [Top x]
-              Closure l _ _ _ -> [Anon l]
-              _ -> []) . Set.toList $ vs)
-        pure . Map.fromList . map t . Map.toList $ vals
+data Init = Init Static Store Config
 
+initialise :: Program Tm.Term -> Init
+initialise program = run . evalState (Label 0) $ do
+  Labeled definitions terms (DataDecl tpName records) <- toLabeled program
+  tps <-
+    sequence
+      [ (tpName,) . ValuePtr <$> nextLabel,
+        ("string",) . ValuePtr <$> nextLabel
+      ]
+  let tpEnv = Map.fromList tps
+      build env rs = rs <&> \case Record n es -> Struct n (fmap (env Map.!) es)
+      elems = Set.fromList $ build tpEnv records
+      vStore =
+        Map.fromList
+          [ (tpEnv Map.! tpName, elems),
+            (tpEnv Map.! "string", Set.singleton Str)
+          ]
+      Scope xs main = definitions Map.! mkVar "main"
+      env = Map.fromList (xs `zip` [tpEnv Map.! tpName])
+      kStore = Map.singleton (ContPtr main) (Set.singleton Halt)
+      conf = Eval env main (ContPtr main)
+  pure $ Init (Static terms definitions) (Store vStore kStore) conf
+
+format :: Map ValuePtr (Set Value) -> Map Label (Set Function)
+format = Map.fromList . map aux . Map.toList
+  where
+    aux (ValuePtr lbl, vs) = (lbl, Set.fromList . concatMap fmt . toList $ vs)
+    fmt (TopLevel x) = [Top x]
+    fmt (Closure l _ _ _) = [Anon l]
+    fmt _ = []
+
+analyse :: Program Tm.Term -> Map Label (Set Function)
+analyse program = 
+  let (Init static store conf) = initialise program
+      go s = let s' = step static s in if s == s' then s else go s'
+      (Store vStore _, _) = go (store, Set.singleton conf)
+   in format vStore
 
 instance Pretty ValuePtr where
   pretty (ValuePtr lbl) = pretty lbl

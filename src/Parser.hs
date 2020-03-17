@@ -6,35 +6,34 @@ where
 import Control.Monad.Writer
 import qualified Data.Char as Char
 import qualified Data.Set as Set
+import MyPrelude
 import Syntax
+import Syntax.Term
 import Text.Megaparsec hiding (State (..))
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
-import MyPrelude
 
--- type Parser a = ParsecT Void Text (State Metadata) a
-
-type Parser m = (MonadParsec Void Text m, MonadStx m)
+type Parser a = Parsec Void Text a
 
 keywords :: [Text]
 keywords = ["def", "@no-cps", "fun", "case", "let", "_", "def-data", "error"]
 
-symbol :: Parser m => Text -> m Text
+symbol :: Text -> Parser Text
 symbol = L.symbol space
 
-lexeme :: Parser m => m a -> m a
+lexeme :: Parser a -> Parser a
 lexeme = L.lexeme space
 
-keyword :: Parser m => Text -> m Text
+keyword :: Text -> Parser Text
 keyword s = lexeme $ try (string s <* notFollowedBy alphaNumChar)
 
-parens :: Parser m => m a -> m a
+parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
-braces :: Parser m => m a -> m a
+braces :: Parser a -> Parser a
 braces = between (symbol "{") (symbol "}")
 
-ident :: Parser m => m Text
+ident :: Parser Text
 ident = mfilter (not . flip elem keywords) . lexeme $ txt
   where
     txt = takeWhile1P (Just "identifier") p
@@ -42,13 +41,16 @@ ident = mfilter (not . flip elem keywords) . lexeme $ txt
     p '-' = True
     p c = Char.isLetter c
 
-tag :: Parser m => m Tag
+tag :: Parser Tag
 tag = SrcTag <$> ident
 
-var :: Parser m => m Var
+var :: Parser Var
 var = mkVar <$> ident
 
-parseTerm :: Parser m => m Term
+mkTerm :: TermF Term -> Parser Term
+mkTerm = pure . Term
+
+parseTerm :: Parser Term
 parseTerm = try (parens (choice exprs)) <|> try cons <|> err <|> variable
   where
     variable = mkTerm . Var =<< var
@@ -67,10 +69,10 @@ parseTerm = try (parens (choice exprs)) <|> try cons <|> err <|> variable
     cons = mkTerm . Cons =<< parseRecord parseTerm
     err = keyword "error" >> mkTerm Error
 
-parsePatterns :: Parser m => m (Patterns Term)
+parsePatterns :: Parser (Patterns Term)
 parsePatterns = Patterns <$> many parseCase
 
-parseCase :: Parser m => m (Pattern (), Scope Term)
+parseCase :: Parser (Pattern (), Scope Term)
 parseCase = parens $ do
   (p, xs) <- extractNames <$> pattern
   t <- parseTerm
@@ -83,10 +85,10 @@ parseCase = parens $ do
           PVar . mkVar <$> ident
         ]
 
-annot :: Parser m => m Annot
+annot :: Parser Annot
 annot = keyword "@no-cps" >> pure NoCps
 
-parseDef :: Parser m => m (Def Term)
+parseDef :: Parser (Def Term)
 parseDef = parens $ do
   x <- keyword "def" >> var
   as <- Set.fromList <$> many annot
@@ -94,27 +96,25 @@ parseDef = parens $ do
   t <- parseTerm
   pure $ Def as x (Scope xs t)
 
-parseProgram :: Parser m => m (Program Term)
+parseProgram :: Parser (Program Term)
 parseProgram = do
   dt <- parseData
   defs <- many parseDef
   pure $ Program defs dt
 
-parseData :: Parser m => m DataDecl
+parseData :: Parser DataDecl
 parseData = parens $ do
   name <- keyword "def-data" >> ident
   records <- many $ parseRecord ident
   pure $ DataDecl name records
 
-parseRecord :: Parser m => m a -> m (Record a)
+parseRecord :: Parser a -> Parser (Record a)
 parseRecord subterm = braces $ do
   name <- tag
   subterms <- many subterm
   pure $ Record name subterms
 
-run :: (Monad m, MonadStx m) => String -> Text -> m (Program Term)
-run f txt = do
-  e <- runParserT (parseProgram <* eof) f txt
-  case e of
-    Left err -> error . errorBundlePretty $ err
-    Right t -> pure t
+run :: String -> Text -> Program Term
+run f txt = case runParser (parseProgram <* eof) f txt of
+  Left err -> error . errorBundlePretty $ err
+  Right t -> t

@@ -4,6 +4,7 @@ import Control.Monad.Except
 import qualified Data.Map as Map
 import Data.Text.Prettyprint.Doc
 import Syntax
+import Syntax.Term
 import MyPrelude
 import Control.Monad.Reader
 

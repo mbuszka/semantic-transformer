@@ -9,6 +9,7 @@ import Control.Monad.IO.Class
 import Control.Applicative as X (liftA2, liftA3)
 import Data.Foldable as X (toList)
 import Data.Functor as X (($>))
+import Data.Function as X ((&))
 import Data.Map as X (Map)
 import Data.Set as X (Set)
 import Data.Text as X (Text)
