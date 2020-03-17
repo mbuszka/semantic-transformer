@@ -52,11 +52,11 @@ executable semt
     TypeApplications
     TypeFamilies
     TypeOperators
-    UndecidableInstances
   build-depends:
     , base >=4.7 && <5
     , containers
-    , fused-effects
+    , polysemy
+    , polysemy-plugin
     , lens
     , megaparsec
     , mtl
@@ -73,3 +73,7 @@ executable semt
     -rtsopts
     -with-rtsopts=-N
     -Wall
+    -fplugin=Polysemy.Plugin
+    -O2
+    -flate-specialise
+    -fspecialise-aggressively

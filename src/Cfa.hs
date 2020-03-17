@@ -2,19 +2,19 @@
 
 module Cfa where
 
-import Control.Algebra
-import Control.Carrier.NonDet.Church hiding ((<|>), empty, guard, oneOf)
-import Control.Carrier.Reader
-import Control.Carrier.State.Strict
-import Control.Effect.Choose
-import Control.Effect.Empty
 import Control.Lens
+import Control.Applicative ((<|>), empty)
+import Control.Monad (guard)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Data.Text.Prettyprint.Doc
 import MyPrelude
 import Syntax
 import Control.Monad.IO.Class (MonadIO)
+import Polysemy
+import Polysemy.State
+import Polysemy.Reader
+import Polysemy.NonDet
 
 data Value
   = Closure Label Env [Var] Label
@@ -67,54 +67,50 @@ data Config
 
 type Res = (Store, Config)
 
-type Effs sig m =
-  ( Has NonDet sig m,
-    Has (State Store) sig m,
-    Has (Reader Static) sig m
-  )
+type Effs r = Members '[Reader Static, State Store, NonDet] r
 
-denormalise :: Has (State Static) sig m => Term -> m Label
+denormalise :: Member (State Static) r => Term -> Sem r Label
 denormalise t = do
   t' <- traverse denormalise (unTerm t)
   modify (terms %~ Map.insert (label t) t')
   pure $ label t
 
-term :: Has (Reader Static) sig m => Label -> m (TermF Label)
+term :: Member (Reader Static) r => Label -> Sem r (TermF Label)
 term lbl = asks (view $ terms . at lbl) >>= \case
   Nothing -> error "Term not found"
   Just t -> pure t
 
-oneOf :: (Foldable t, Has NonDet sig m) => t a -> m a
+oneOf :: (Foldable t, Member NonDet r) => t a -> Sem r a
 oneOf = foldr (<|>) empty . fmap pure . toList
 
-derefK :: (Has NonDet sig m, Has (State Store) sig m) => ContPtr -> m Cont
+derefK :: Effs r => ContPtr -> Sem r Cont
 derefK p = do
   xs <- gets (view conts)
   oneOf (xs Map.! p)
 
-derefV :: (Has NonDet sig m, Has (State Store) sig m) => ValuePtr -> m Value
+derefV :: Effs r => ValuePtr -> Sem r Value
 derefV p = do
   xs <- gets (view values)
   oneOf (xs Map.! p)
 
-copy :: Has (State Store) sig m => ValuePtr -> CacheDst -> m ()
+copy :: Member (State Store) r => ValuePtr -> CacheDst -> Sem r ()
 copy src (CacheDst dst) = do
   vs <- gets $ views values (Map.! src)
   modify (values %~ Map.insertWith (<>) (ValuePtr dst) vs)
 
-insertK :: Has (State Store) sig m => Label -> Cont -> m ContPtr
+insertK :: Member (State Store) r => Label -> Cont -> Sem r ContPtr
 insertK lbl k = do
   let ptr = ContPtr lbl
   modify $ conts %~ Map.insertWith (<>) ptr (Set.singleton k)
   pure ptr
 
-insertV :: Has (State Store) sig m => Label -> Value -> m ValuePtr
+insertV :: Member (State Store) r => Label -> Value -> Sem r ValuePtr
 insertV lbl v = do
   let ptr = ValuePtr lbl
   modify $ values %~ Map.insertWith (<>) ptr (Set.singleton v)
   pure ptr
 
-eval :: Effs sig m => Env -> Label -> ContPtr -> m Config
+eval :: Effs r => Env -> Label -> ContPtr -> Sem r Config
 eval env lbl k = term lbl >>= \case
   App f es -> do
     k' <- insertK f (EvalApp env [] es (CacheDst f) k)
@@ -142,7 +138,7 @@ eval env lbl k = term lbl >>= \case
   Error -> empty
   Let{} -> error "Not implemented yet"
 
-continue :: Effs sig m => ValuePtr -> ContPtr -> m Config
+continue :: Effs r => ValuePtr -> ContPtr -> Sem r Config
 continue vPtr kPtr = do
   derefK kPtr >>= \case
     EvalApp env vs es dst k -> do
@@ -168,7 +164,7 @@ continue vPtr kPtr = do
       copy vPtr dst
       applyCases env vPtr ps k
 
-applyCases :: Effs sig m => Env -> ValuePtr -> Patterns Label -> ContPtr -> m Config
+applyCases :: Effs r => Env -> ValuePtr -> Patterns Label -> ContPtr -> Sem r Config
 applyCases environment vPtr (Patterns patterns) k =
   let aux env (PVar x : ps) (v : vs) = aux (Map.insert x v env) ps vs
       aux env (PWild : ps) (_ : vs) = aux env ps vs
@@ -185,7 +181,7 @@ applyCases environment vPtr (Patterns patterns) k =
         env <- aux environment [insertNames p xs] [vPtr]
         pure $ Eval env l k
 
-apply :: Effs sig m => ValuePtr -> [ValuePtr] -> ContPtr -> m Config
+apply :: Effs r => ValuePtr -> [ValuePtr] -> ContPtr -> Sem r Config
 apply f as k = derefV f >>= \case
   Closure _ env xs body ->
     pure $ Eval (Map.fromList (xs `zip` as) `Map.union` env) body k
@@ -197,7 +193,7 @@ apply f as k = derefV f >>= \case
 step :: Static -> (Store, Set Config) -> (Store, Set Config)
 step static (store, confs) = (s, Set.fromList cs)
   where
-    (s, cs) = run . runReader static . runState store . runNonDetA $ comp
+    (s, cs) = run . runReader static . runState store . runNonDet $ comp
     comp = oneOf confs >>= \case
       Eval env e k -> eval env e k
       Continue v k -> continue v k

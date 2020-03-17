@@ -2,11 +2,8 @@ module Main where
 
 import qualified Anf
 import qualified Cps
-import qualified Eval
-import Data.Text.Prettyprint.Doc
-import Data.Text.Prettyprint.Doc.Render.Text
+-- import qualified Eval
 import qualified Parser
-import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import Syntax
 import Control.Monad.Except
