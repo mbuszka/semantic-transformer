@@ -4,7 +4,7 @@ import Syntax
 import MyPrelude
 
 toCps :: MonadStx m => Term -> TermF Term -> m Term
-toCps t k = case unTerm t of
+toCps term k = case unTerm term of
   v@Var {} -> mkTerm =<< liftA2 App (mkTerm k) (traverse mkTerm [v])
   Abs (Scope xs t) -> do
     k' <- freshVar
@@ -17,8 +17,9 @@ toCps t k = case unTerm t of
   Let t (Scope [x] b) -> do
     b' <- toCps b k
     toCps t (Abs $ Scope [x] b')
+  Let _ _ -> error "Let should bind only a single variable"
   Case t ps -> case k of
-    Var k -> mkTerm . Case t =<< traverse (flip toCps (Var k)) ps
+    Var{} -> mkTerm . Case t =<< traverse (flip toCps k) ps
     _ -> do
       k' <- freshVar
       ps' <- traverse (flip toCps (Var k')) ps

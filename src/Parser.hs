@@ -1,7 +1,3 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
-
 module Parser
   ( run,
   )
@@ -9,19 +5,18 @@ where
 
 import Control.Monad.Writer
 import qualified Data.Char as Char
-import qualified Data.Text as T
 import qualified Data.Set as Set
 import Syntax
 import Text.Megaparsec hiding (State (..))
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
-import Text.Megaparsec.Debug
 import MyPrelude
 
 -- type Parser a = ParsecT Void Text (State Metadata) a
 
 type Parser m = (MonadParsec Void Text m, MonadStx m)
 
+keywords :: [Text]
 keywords = ["def", "@no-cps", "fun", "case", "let", "_", "def-data", "error"]
 
 symbol :: Parser m => Text -> m Text
@@ -42,10 +37,10 @@ braces = between (symbol "{") (symbol "}")
 ident :: Parser m => m Text
 ident = mfilter (not . flip elem keywords) . lexeme $ txt
   where
-    txt = takeWhile1P (Just "identifier") pred
-    pred '_' = True
-    pred '-' = True
-    pred c = Char.isLetter c
+    txt = takeWhile1P (Just "identifier") p
+    p '_' = True
+    p '-' = True
+    p c = Char.isLetter c
 
 tag :: Parser m => m Tag
 tag = SrcTag <$> ident
@@ -54,11 +49,11 @@ var :: Parser m => m Var
 var = mkVar <$> ident
 
 parseTerm :: Parser m => m Term
-parseTerm = try (parens (choice exprs)) <|> try cons <|> err <|> v
+parseTerm = try (parens (choice exprs)) <|> try cons <|> err <|> variable
   where
-    v = mkTerm . Var =<< var
-    exprs = [abs, let', case', app]
-    abs = keyword "fun" >> do
+    variable = mkTerm . Var =<< var
+    exprs = [lam, let', case', app]
+    lam = keyword "fun" >> do
       xs <- parens (many var)
       body <- parseTerm
       mkTerm (Abs $ Scope xs body)
@@ -112,10 +107,10 @@ parseData = parens $ do
   pure $ DataDecl name records
 
 parseRecord :: Parser m => m a -> m (Record a)
-parseRecord elem = braces $ do
+parseRecord subterm = braces $ do
   name <- tag
-  elems <- many elem
-  pure $ Record name elems
+  subterms <- many subterm
+  pure $ Record name subterms
 
 run :: (Monad m, MonadStx m) => String -> Text -> m (Program Term)
 run f txt = do

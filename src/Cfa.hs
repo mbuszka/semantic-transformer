@@ -8,9 +8,6 @@ import Control.Carrier.Reader
 import Control.Carrier.State.Strict
 import Control.Effect.Choose
 import Control.Effect.Empty
-import Control.Effect.NonDet hiding ((<|>), empty, guard, oneOf)
-import Control.Effect.Reader
-import Control.Effect.State
 import Control.Lens
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -101,9 +98,9 @@ derefV p = do
   oneOf (xs Map.! p)
 
 copy :: Has (State Store) sig m => ValuePtr -> CacheDst -> m ()
-copy from (CacheDst to) = do
-  vs <- gets $ views values (Map.! from)
-  modify (values %~ Map.insertWith (<>) (ValuePtr to) vs)
+copy src (CacheDst dst) = do
+  vs <- gets $ views values (Map.! src)
+  modify (values %~ Map.insertWith (<>) (ValuePtr dst) vs)
 
 insertK :: Has (State Store) sig m => Label -> Cont -> m ContPtr
 insertK lbl k = do
@@ -143,16 +140,16 @@ eval env lbl k = term lbl >>= \case
     k' <- insertK e (EvalCase env ps (CacheDst e) k)
     pure $ Eval env e k'
   Error -> empty
+  Let{} -> error "Not implemented yet"
 
 continue :: Effs sig m => ValuePtr -> ContPtr -> m Config
 continue vPtr kPtr = do
-  k <- derefK kPtr
-  case k of
+  derefK kPtr >>= \case
     EvalApp env vs es dst k -> do
       copy vPtr dst
       case es of
-        e : es -> do
-          k' <- insertK e $ EvalApp env (vPtr : vs) es (CacheDst e) k
+        e : es' -> do
+          k' <- insertK e $ EvalApp env (vPtr : vs) es' (CacheDst e) k
           pure $ Eval env e k'
         [] -> do
           let f : as = reverse (vPtr : vs)
@@ -161,8 +158,8 @@ continue vPtr kPtr = do
     EvalCons lbl c env vs es dst k -> do
       copy vPtr dst
       case es of
-        e : es -> do
-          k' <- insertK e $ EvalCons lbl c env (vPtr : vs) es (CacheDst e) k
+        e : es' -> do
+          k' <- insertK e $ EvalCons lbl c env (vPtr : vs) es' (CacheDst e) k
           pure $ Eval env e k'
         [] -> do
           cPtr <- insertV lbl $ Struct c (reverse $ vPtr : vs)
@@ -172,7 +169,7 @@ continue vPtr kPtr = do
       applyCases env vPtr ps k
 
 applyCases :: Effs sig m => Env -> ValuePtr -> Patterns Label -> ContPtr -> m Config
-applyCases env vPtr (Patterns ps) k =
+applyCases environment vPtr (Patterns patterns) k =
   let aux env (PVar x : ps) (v : vs) = aux (Map.insert x v env) ps vs
       aux env (PWild : ps) (_ : vs) = aux env ps vs
       aux env (PCons (Record c ps') : ps) (v : vs) = derefV v >>= \case
@@ -184,9 +181,9 @@ applyCases env vPtr (Patterns ps) k =
       aux env [] [] = pure env
       aux _ _ _ = empty
    in do
-        (p, Scope xs l) <- oneOf ps
-        env' <- aux env [insertNames p xs] [vPtr]
-        pure $ Eval env' l k
+        (p, Scope xs l) <- oneOf patterns
+        env <- aux environment [insertNames p xs] [vPtr]
+        pure $ Eval env l k
 
 apply :: Effs sig m => ValuePtr -> [ValuePtr] -> ContPtr -> m Config
 apply f as k = derefV f >>= \case
@@ -207,8 +204,8 @@ step static (store, confs) = (s, Set.fromList cs)
 
 analyse :: (MonadStx m, MonadIO m) => Program Term -> m (Map Label (Set Function))
 analyse p =
-  let (s, Program defs (DataDecl n rs)) = run $ runState (Static Map.empty Map.empty) (traverse denormalise p)
-      static = s & topLevel .~ ts
+  let (st, Program defs (DataDecl tpName records)) = run $ runState (Static Map.empty Map.empty) (traverse denormalise p)
+      static = st & topLevel .~ ts
       ts = Map.fromList (map aux defs)
       aux (Def _ x s) = (x, s)
       Scope xs main = ts Map.! mkVar "main"
@@ -218,43 +215,27 @@ analyse p =
         tpEnv <-
           Map.fromList
             <$> sequence
-              [ (n,) . ValuePtr <$> freshLabel,
+              [ (tpName,) . ValuePtr <$> freshLabel,
                 ("string",) . ValuePtr <$> freshLabel
               ]
         pprint tpEnv
-        let elems = Set.fromList $ build tpEnv rs
+        let elems = Set.fromList $ build tpEnv records
             vStore =
               Map.fromList
-                [ (tpEnv Map.! n, elems),
+                [ (tpEnv Map.! tpName, elems),
                   (tpEnv Map.! "string", Set.singleton Str)
                 ]
             kStore = Map.singleton (ContPtr main) (Set.singleton Halt)
             store = Store vStore kStore
-            env = Map.fromList (xs `zip` [tpEnv Map.! n])
+            env = Map.fromList (xs `zip` [tpEnv Map.! tpName])
             conf = Set.singleton (Eval env main (ContPtr main))
-            (Store values _, _) = go (store, conf)
-            t (ValuePtr l, vs) = (l, Set.fromList . concatMap (\case
+            (Store vals _, _) = go (store, conf)
+            t (ValuePtr lbl, vs) = (lbl, Set.fromList . concatMap (\case
               TopLevel x -> [Top x]
               Closure l _ _ _ -> [Anon l]
               _ -> []) . Set.toList $ vs)
-        pure . Map.fromList . map t . Map.toList $ values
+        pure . Map.fromList . map t . Map.toList $ vals
 
--- continue :: MonadReader Static m => Store -> Label -> Label -> m [Res]
--- continue store v k =
---   let store' = copy v k store
---    in forM [(k, v) | k <- derefK k store', v <- derefV v store'] $ \case
---         (EvalArg env lbl k, v) ->
---           let store'' = insertK lbl (EvalApp v k) store'
---            in pure (store'', Eval env lbl lbl)
---         (EvalApp (Closure env x body) k, v) ->
---           pure (store', Eval (Map.insert x v env) body k)
-{- TODO:
-  - values are bound to address coresponding to the expresion wich produced them
-  - each expression along the way should re-bind the values to its address
-  - this way store serves as a 'cache' for each expression in the program
-  - continuations are bound to address corresponding to subexpression wich will
-    be evaluated next
- -}
 
 instance Pretty ValuePtr where
   pretty (ValuePtr lbl) = pretty lbl

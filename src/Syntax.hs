@@ -31,8 +31,6 @@ module Syntax
   )
 where
 
--- import qualified Abt as Abt
--- import Abt (Bound, MonadStx, Scope(..), Var, freeVars, freshVar, mkTerm)
 import Control.Lens
 import qualified Data.Set as Set
 import Data.Text.Prettyprint.Doc
@@ -115,7 +113,7 @@ instance Bound t => Bound (Record t) where
   freeVars (Record _ ts) = foldMap freeVars ts
 
 instance Bound t => Bound (TermF t) where
-  freeVars t = case t of
+  freeVars term = case term of
     Var v -> Set.singleton v
     Abs s -> freeVars s
     App f xs -> foldMap freeVars (f : xs)
@@ -124,15 +122,18 @@ instance Bound t => Bound (TermF t) where
     Cons r -> freeVars r
     Error -> Set.empty
 
+
+
 extractNames :: Pattern Var -> (Pattern (), [Var])
 extractNames p = (p $> (), toList p)
 
 insertNames :: Pattern a -> [Var] -> Pattern Var
-insertNames p vs = case go p vs of
+insertNames pattern variables = case go pattern variables of
   (p, []) -> p
   _ -> error "Mismatched variable count"
   where
     go (PVar _) (v : vs) = (PVar v, vs)
+    go (PVar _) [] = error "Mismatched pattern variables"
     go PWild vs = (PWild, vs)
     go (PCons r) vs = runState (PCons <$> traverse (state . go) r) vs
 
@@ -194,7 +195,7 @@ instance Pretty Annot where
   pretty NoCps = "@no-cps"
 
 instance Pretty t => Pretty (Def t) where
-  pretty (Def ann v (Scope vs t)) =
+  pretty (Def _ann v (Scope vs t)) =
     parens $
       "def" <+> pretty v <+> parens (hsep . map pretty $ vs)
         <> nest 2 (line <> pretty t)
@@ -216,7 +217,7 @@ instance Pretty Tag where
   pretty (GenTag lbl) = "gen-" <> pretty lbl
 
 prettyTerm :: Pretty t => TermF t -> Doc ann
-prettyTerm t = case t of
+prettyTerm term = case term of
   Var v -> pretty v
   Abs (Scope vs t) ->
     parens ("fun" <+> parens (hsep . map pretty $ vs) <+> block (pretty t))

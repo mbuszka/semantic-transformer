@@ -10,7 +10,7 @@ unwrap (Atom t) = t
 unwrap (Expr t) = t
 
 atomic :: MonadStx m => Term -> (Term -> m Anf) -> m Anf
-atomic t k = toAnf t >>= \case
+atomic term k = toAnf term >>= \case
   Expr t -> do
     v <- freshVar
     body <- k =<< mkTerm (Var v)
@@ -27,14 +27,14 @@ toAnf' :: MonadStx m => Term -> m Term
 toAnf' t = unwrap <$> toAnf t
 
 toAnf :: MonadStx m => Term -> m Anf
-toAnf t = case unTerm t of
+toAnf term = case unTerm term of
   v@Var {} -> atom v
   Abs s -> atom . Abs =<< toAnfS s
-  App f ts -> atomic f (\f -> seqAnf ts [] (expr . App f))
+  App f ts -> atomic f (\f' -> seqAnf ts [] (expr . App f'))
   Let t s -> expr =<< liftA2 Let (toAnf' t) (toAnfS s)
   Cons (Record c ts) -> seqAnf ts [] (atom . Cons . Record c)
   Case t cs ->
-    atomic t (\t -> expr . Case t =<< traverse toAnf' cs)
+    atomic t (\t' -> expr . Case t' =<< traverse toAnf' cs)
   Error -> expr Error
 
 toAnfS :: MonadStx m => Scope Term -> m (Scope Term)
@@ -42,7 +42,7 @@ toAnfS (Scope xs t) = Scope xs <$> toAnf' t
 
 seqAnf :: MonadStx m => [Term] -> [Term] -> ([Term] -> m Anf) -> m Anf
 seqAnf [] acc k = k (reverse acc)
-seqAnf (t : ts) acc k = atomic t (\t -> seqAnf ts (t : acc) k)
+seqAnf (t : ts) acc k = atomic t (\t' -> seqAnf ts (t' : acc) k)
 
 fromSource :: MonadStx m => Program Term -> m (Program Term)
 fromSource = traverse toAnf'

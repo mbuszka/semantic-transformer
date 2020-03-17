@@ -45,24 +45,26 @@ lookup env x = case env Map.!? x of
 
 topLevel :: MonadEval m => Var -> m (Scope Term)
 topLevel x = do
-  s <- ask
-  case s Map.!? x of
+  defs <- ask
+  case defs Map.!? x of
     Nothing -> throwError $ "Unknown top-level function: " <> pshow x
     Just s -> pure s
 
 eval :: MonadEval m => Env -> Term -> [Cont] -> m Value
-eval env t cont = case unTerm t of
+eval env term cont = case unTerm term of
   Var x -> do
     v <- Eval.lookup env x
     continue v cont
   Abs s -> do
-    let clo = Closure (env `Map.restrictKeys` freeVars t) s
+    let clo = Closure (env `Map.restrictKeys` freeVars term) s
     continue clo cont
   App f xs -> eval env f (EvalFun env xs : cont)
   Let t (Scope [x] b) -> eval env t (EvalLet env x b : cont)
   Case t ps -> eval env t (EvalCase env ps : cont)
   Cons (Record c []) -> continue (Struct c []) cont
   Cons (Record c (t : ts)) -> eval env t (EvalCons env c [] ts : cont)
+  Let _ _ -> error "Not implemented yet"
+  Error -> error "Not implemented yet"
 
 continue :: MonadEval m => Value -> [Cont] -> m Value
 continue v cont = case cont of
@@ -78,7 +80,7 @@ continue v cont = case cont of
     eval (Map.insert x v env) t ks
   EvalCase env (Patterns ps) : ks ->
     evalCase env v ps ks
-  EvalCons env c vs [] : ks ->
+  EvalCons _env c vs [] : ks ->
     continue (Struct c (reverse (v : vs))) ks
   EvalCons env c vs (t : ts) : ks ->
     eval env t $ EvalCons env c (v : vs) ts : ks
@@ -91,10 +93,10 @@ evalCase ::
   [(Pattern (), Scope Term)] ->
   [Cont] ->
   m Value
-evalCase env v ps ks = case ps of
+evalCase environment value patterns ks = case patterns of
   [] -> throwError "Non-exhaustive pattern match"
-  (p, Scope xs t) : ps -> case aux [p] xs [v] env of
-    Nothing -> evalCase env v ps ks
+  (p, Scope xs t) : ps -> case aux [p] xs [value] environment of
+    Nothing -> evalCase environment value ps ks
     Just env -> eval env t ks
   where
     aux (PVar () : ps) (x : xs) (v : vs) env = aux ps xs vs (Map.insert x v env)
@@ -120,5 +122,5 @@ apply f vs ks = do
 
 instance Pretty Value where
   pretty (Struct c vs) = braces (hsep $ pretty c : map pretty vs)
-  pretty (Closure _ s) = "<closure>"
+  pretty (Closure _ _) = "<closure>"
   pretty (TopLevel x) = "<function:" <+> pretty x <> ">"
