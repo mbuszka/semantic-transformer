@@ -17,17 +17,13 @@ import Polysemy.State
 import Syntax
 import Syntax.Labeled
 import qualified Syntax.Term as Tm
+import Data.List (nub)
 
 data Value
   = Closure Label Env [Var] Label
   | TopLevel Var
   | Struct Tag [ValuePtr]
   | Str
-  deriving (Eq, Ord)
-
-data Function
-  = Top Var
-  | Anon Label
   deriving (Eq, Ord)
 
 type Env = Map Var ValuePtr
@@ -116,7 +112,9 @@ eval env lbl k = term lbl >>= \case
     pure $ Continue ptr k
   Var x -> do
     ptr <- case env Map.!? x of
-      Just v -> pure v
+      Just v -> do
+        copy v (CacheDst lbl)
+        pure $ ValuePtr lbl
       Nothing -> asks (views topLevel (Map.member x)) >>= \b ->
         if b
           then insertV lbl (TopLevel x)
@@ -196,9 +194,9 @@ step static (store, confs) = (s, Set.fromList cs)
 
 data Init = Init Static Store Config
 
-initialise :: Program Tm.Term -> Init
+initialise :: Program Tm.Term -> (Init, Labeled)
 initialise program = run . evalState (Label 0) $ do
-  Labeled definitions terms (DataDecl tpName records) <- toLabeled program
+  l@(Labeled definitions terms (DataDecl tpName records)) <- toLabeled program
   tps <-
     sequence
       [ (tpName,) . ValuePtr <$> nextLabel,
@@ -216,22 +214,32 @@ initialise program = run . evalState (Label 0) $ do
       env = Map.fromList (xs `zip` [tpEnv Map.! tpName])
       kStore = Map.singleton (ContPtr main) (Set.singleton Halt)
       conf = Eval env main (ContPtr main)
-  pure $ Init (Static terms definitions) (Store vStore kStore) conf
+  pure (Init (Static terms definitions) (Store vStore kStore) conf, l)
 
-format :: Map ValuePtr (Set Value) -> Map Label (Set Function)
+format :: Map ValuePtr (Set Value) -> Map Label [Tag]
 format = Map.fromList . map aux . Map.toList
   where
-    aux (ValuePtr lbl, vs) = (lbl, Set.fromList . concatMap fmt . toList $ vs)
-    fmt (TopLevel x) = [Top x]
-    fmt (Closure l _ _ _) = [Anon l]
+    aux (ValuePtr lbl, vs) = (lbl, nub . concatMap fmt . toList $ vs)
+    fmt (TopLevel x) = [TopTag x]
+    fmt (Closure (Label l) _ _ _) = [GenTag l]
     fmt _ = []
 
-analyse :: Program Tm.Term -> Map Label (Set Function)
-analyse program = 
-  let (Init static store conf) = initialise program
-      go s = let s' = step static s in if s == s' then s else go s'
-      (Store vStore _, _) = go (store, Set.singleton conf)
-   in format vStore
+analyse :: Member (Embed IO) r => Program Tm.Term -> Sem r (Labeled, Map Label [Tag])
+analyse program = do
+  let ((Init static store conf), pgm) = initialise program
+      go s n = let s' = step static s in
+        if s == s' then pure s else do
+          -- if n `mod` 100 == 0
+          --   then do
+          --     embed $ pprint n
+          --     let (Store vStore kStore, configs) = s
+          --     embed . pprint $ vStore
+          --     embed . pprint $ kStore
+          --     -- embed . pprint $ length configs
+          --   else pure ()
+          go s' (n+1)
+  (Store vStore _, _) <- go (store, Set.singleton conf) (0 :: Int)
+  pure (pgm, format vStore)
 
 instance Pretty ValuePtr where
   pretty (ValuePtr lbl) = pretty lbl
@@ -260,7 +268,3 @@ instance (Pretty k, Pretty v) => Pretty (Map k v) where
 
 instance Pretty a => Pretty (Set a) where
   pretty = sep . map pretty . toList
-
-instance Pretty Function where
-  pretty (Top x) = pretty x
-  pretty (Anon l) = pretty l

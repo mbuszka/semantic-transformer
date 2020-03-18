@@ -4,10 +4,12 @@ import qualified Anf
 import qualified Cps
 import qualified Parser
 import qualified Data.Text.IO as Text
+import qualified Syntax.Labeled as Labeled
 import Syntax
 import Control.Monad.Except
 import MyPrelude
 import qualified Cfa
+import qualified Defun
 import System.Environment (getArgs)
 import Polysemy
 
@@ -30,7 +32,6 @@ test file = do
   let p = Parser.run file $ pgm
   seq p (liftIO $ putStrLn "Parsed program")
   pprint p
-  pprint $ Cfa.analyse p
   -- pRes <- Eval.run p
   -- pprint pRes
   anf <- Anf.fromSource p
@@ -41,7 +42,10 @@ test file = do
   cps <- Cps.fromAnf anf
   putTextLn "Transformed to CPS"
   pprint cps
-  pprint $ Cfa.analyse cps
+  (labeled, analysis) <- Cfa.analyse cps
+  pprint analysis
+  defun <- Defun.fromLabeled labeled analysis
+  pprint defun
   -- cpsRes <- Eval.run cps
   -- pprint cpsRes
   -- if cpsRes == anfRes && anfRes == pRes

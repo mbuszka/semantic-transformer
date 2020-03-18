@@ -6,7 +6,7 @@ module Syntax
     FreshVar,
     Pattern (..),
     Patterns (..),
-    Pretty,
+    Pretty (..),
     Program (..),
     Record (..),
     Scope (..),
@@ -66,7 +66,7 @@ newtype Patterns t = Patterns [(Pattern (), Scope t)]
 data Var = SrcVar Text | GenVar Int
   deriving (Eq, Ord)
 
-data Tag = SrcTag Text | GenTag Int
+data Tag = SrcTag Text | GenTag Int | TopTag Var
   deriving (Eq, Ord)
 
 data Scope t = Scope [Var] t
@@ -93,9 +93,12 @@ instance Bound t => Bound (TermF t) where
     Abs s -> freeVars s
     App f xs -> foldMap freeVars (f : xs)
     Let t s -> freeVars t `Set.union` freeVars s
-    Case t ps -> freeVars t `Set.union` foldMap freeVars ps
+    Case t ps -> freeVars t `Set.union` freeVars ps
     Cons r -> freeVars r
     Error -> Set.empty
+
+instance Bound t => Bound (Patterns t) where
+  freeVars (Patterns ps) = foldMap (freeVars . snd) ps
 
 extractNames :: Pattern Var -> (Pattern (), [Var])
 extractNames p = (p $> (), toList p)
@@ -159,9 +162,16 @@ instance Pretty t => Pretty (Patterns t) where
 instance Pretty t => Pretty (Record t) where
   pretty (Record c ts) = encloseSep lbrace rbrace space (pretty c:map pretty ts)
 
+instance Pretty t => Pretty (Scope t) where
+  pretty (Scope xs t) = slist xs <+> pretty t 
+
 instance Pretty Tag where
   pretty (SrcTag c) = pretty c
-  pretty (GenTag lbl) = "gen-" <> pretty lbl
+  pretty (GenTag lbl) = "lam-" <> pretty lbl
+  pretty (TopTag v) = pretty v
+
+slist :: Pretty a => [a] -> Doc ann
+slist xs = encloseSep lparen rparen space (map pretty xs)
 
 prettyTerm :: Pretty t => TermF t -> Doc ann
 prettyTerm term = case term of

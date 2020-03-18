@@ -41,9 +41,11 @@ executable semt
     DeriveFunctor
     DeriveTraversable
     FlexibleContexts
+    FlexibleInstances
     GADTs
     GeneralizedNewtypeDeriving
     LambdaCase
+    MultiParamTypeClasses
     OverloadedStrings
     PolyKinds
     RankNTypes
