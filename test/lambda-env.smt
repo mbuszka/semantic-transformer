@@ -9,8 +9,7 @@
     (_ {false})
     (_ {true})))
 
-(def extend (env k v)
-  {extend env k v})
+(def extend (env k v) {extend env k v})
 
 (def lookup (env x)
   (case env
@@ -28,5 +27,4 @@
     ({app f x} ((eval env f) (eval env x)))
     ({unit} {unit})))
 
-(def main (term)
-  (eval {empty} term))
+(def main (term) (eval {empty} term))

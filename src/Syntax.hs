@@ -21,13 +21,11 @@ module Syntax
   )
 where
 
-import Control.Lens
-import qualified Data.Set as Set
-import Data.Text.Prettyprint.Doc
-import Data.IORef
-import MyPrelude
 import Control.Monad.State
+import Data.IORef
+import qualified Data.Set as Set
 import Polysemy
+import Pretty
 
 data Program t = Program [Def t] DataDecl
   deriving (Functor, Foldable, Traversable)
@@ -37,7 +35,7 @@ data Def t = Def (Set Annot) Var (Scope t)
 
 data Annot
   = NoCps
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord)
 
 data DataDecl = DataDecl Text [Record Text]
 
@@ -100,6 +98,7 @@ instance Bound t => Bound (TermF t) where
 instance Bound t => Bound (Patterns t) where
   freeVars (Patterns ps) = foldMap (freeVars . snd) ps
 
+-- Pattern helpers
 extractNames :: Pattern Var -> (Pattern (), [Var])
 extractNames p = (p $> (), toList p)
 
@@ -113,17 +112,17 @@ insertNames pattern variables = case go pattern variables of
     go PWild vs = (PWild, vs)
     go (PCons r) vs = runState (PCons <$> traverse (state . go) r) vs
 
--- runStxT :: Monad m => StateT Metadata m a -> m a
--- runStxT a = evalStateT a initialMetadata
-
 runFreshVar :: Member (Embed IO) r => Sem (FreshVar ': r) a -> Sem r a
 runFreshVar sem = do
   ref <- embed $ newIORef (0 :: Int)
-  interpret (\case
-    FreshVar -> do
-      x <- embed $ readIORef ref
-      embed $ writeIORef ref (x+1)
-      return (GenVar x)) sem
+  interpret
+    ( \case
+        FreshVar -> do
+          x <- embed $ readIORef ref
+          embed $ writeIORef ref (x + 1)
+          return (GenVar x)
+    )
+    sem
 
 mkVar :: Text -> Var
 mkVar = SrcVar
@@ -146,46 +145,48 @@ instance Pretty Annot where
 
 instance Pretty t => Pretty (Def t) where
   pretty (Def _ann v (Scope vs t)) =
-    parens $
-      "def" <+> pretty v <+> parens (hsep . map pretty $ vs)
-        <> nest 2 (line <> pretty t)
+    parens ("def" <+> pretty v <> body (variables vs) (pretty t))
 
 instance Pretty t => Pretty (Program t) where
   pretty (Program defs _) =
-    encloseSep mempty mempty line (pretty <$> defs)
+    rows . fmap (\d -> pretty d <> hardline) $ defs
 
 instance Pretty t => Pretty (Patterns t) where
-  pretty (Patterns ps) = vsep . map pat $ ps
+  pretty (Patterns ps) = case ps of
+    [] -> mempty
+    [p] -> pat p
+    _ -> rows . fmap pat $ ps
     where
-      pat (p, Scope vs t) = parens (pretty (insertNames p vs) <+> pretty t)
+      pat (p, Scope vs t) =
+        parens (pretty (insertNames p vs) <> nested 1 (pretty t))
 
 instance Pretty t => Pretty (Record t) where
-  pretty (Record c ts) = encloseSep lbrace rbrace space (pretty c:map pretty ts)
+  pretty (Record c ts) = braces (pretty c <> (nested' 2 ts))
 
 instance Pretty t => Pretty (Scope t) where
-  pretty (Scope xs t) = slist xs <+> pretty t 
+  pretty (Scope xs t) = variables xs <+> pretty t
 
 instance Pretty Tag where
   pretty (SrcTag c) = pretty c
   pretty (GenTag lbl) = "lam-" <> pretty lbl
   pretty (TopTag v) = pretty v
 
-slist :: Pretty a => [a] -> Doc ann
-slist xs = encloseSep lparen rparen space (map pretty xs)
-
 prettyTerm :: Pretty t => TermF t -> Doc ann
 prettyTerm term = case term of
-  Var v -> pretty v
+  Var v ->
+    pretty v
   Abs (Scope vs t) ->
-    parens ("fun" <+> parens (hsep . map pretty $ vs) <+> block (pretty t))
-  App f ts -> parens (pretty f <+> block (vsep . map pretty $ ts))
+    parens ("fun" <> body (variables vs) (pretty t))
+  App f ts ->
+    parens (pretty f <> nested' 2 ts)
   Let t (Scope [v] b) ->
-    parens ("let" <+> pretty v <+> nest 2 (sep [pretty t, pretty b]))
-  Cons r -> pretty r
+    parens ("let" <+> pretty v <> body (pretty t) (pretty b))
+  Cons r ->
+    pretty r
   Case t ps ->
-    parens ("case" <+> pretty t <> nest 2 (line <> pretty ps))
+    parens ("case" <> body (pretty t) (pretty ps))
   Error -> "error"
   _ -> error "Unexpected syntax"
 
-block :: Doc ann -> Doc ann
-block x = group $ flatAlt (nest 2 $ hardline <> x) x
+variables :: [Var] -> Doc ann
+variables = parens . aligned

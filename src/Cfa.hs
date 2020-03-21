@@ -9,7 +9,6 @@ import Control.Monad.IO.Class (MonadIO)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Data.Text.Prettyprint.Doc
-import MyPrelude
 import Polysemy
 import Polysemy.NonDet
 import Polysemy.Reader
@@ -118,7 +117,7 @@ eval env lbl k = term lbl >>= \case
       Nothing -> asks (views topLevel (Map.member x)) >>= \b ->
         if b
           then insertV lbl (TopLevel x)
-          else error $ "Unknown variable: " <> show (pretty x) <> " at " <> show (pretty lbl)
+          else error $ "Unknown variable: " <> pshow x <> " at " <> pshow lbl
     pure $ Continue ptr k
   Cons (Record c []) -> do
     ptr <- insertV lbl (Struct c [])
@@ -217,9 +216,9 @@ initialise program = run . evalState (Label 0) $ do
   pure (Init (Static terms definitions) (Store vStore kStore) conf, l)
 
 format :: Map ValuePtr (Set Value) -> Map Label [Tag]
-format = Map.fromList . map aux . Map.toList
+format = Map.fromList . fmap aux . Map.toList
   where
-    aux (ValuePtr lbl, vs) = (lbl, nub . concatMap fmt . toList $ vs)
+    aux (ValuePtr lbl, vs) = (lbl, nub . (fmt =<<) . toList $ vs)
     fmt (TopLevel x) = [TopTag x]
     fmt (Closure (Label l) _ _ _) = [GenTag l]
     fmt _ = []
@@ -250,12 +249,12 @@ instance Pretty ContPtr where
 instance Pretty Value where
   pretty (Closure lbl _ _ _) = "closure" <+> pretty lbl
   pretty (TopLevel x) = pretty x
-  pretty (Struct c ps) = "{" <+> pretty c <+> (hsep . map pretty) ps <+> "}"
+  pretty (Struct c ps) = "{" <+> pretty c <+> (hsep . fmap pretty) ps <+> "}"
   pretty Str = "string"
 
 instance Pretty Cont where
   pretty (EvalApp _ vs es _ k) =
-    group ("EvalApp(vs=" <+> sep (map pretty vs) <+> "es" <+> sep (map pretty es) <+> "k=" <+> pretty k <> ")")
+    group ("EvalApp(vs=" <+> sep (fmap pretty vs) <+> "es" <+> sep (fmap pretty es) <+> "k=" <+> pretty k <> ")")
   pretty Halt = "Halt"
   pretty (EvalCons _ _ _ _ _ _ k) = "(EvalCons" <+> pretty k <> ")"
   pretty (EvalCase _ _ _ k) = "(EvalCase" <+> pretty k <> ")"
@@ -264,7 +263,7 @@ instance Pretty Store where
   pretty (Store vs ks) = vsep [pretty vs, pretty ks]
 
 instance (Pretty k, Pretty v) => Pretty (Map k v) where
-  pretty = vsep . map pretty . Map.toList
+  pretty = vsep . fmap pretty . Map.toList
 
 instance Pretty a => Pretty (Set a) where
-  pretty = sep . map pretty . toList
+  pretty = sep . fmap pretty . toList

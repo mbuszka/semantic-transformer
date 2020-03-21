@@ -2,7 +2,6 @@ module Cps where
 
 import Syntax
 import Syntax.Term
-import MyPrelude
 import Anf
 import Polysemy
 

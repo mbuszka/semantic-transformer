@@ -1,55 +1,37 @@
 module Main where
 
 import qualified Anf
-import qualified Cps
-import qualified Parser
-import qualified Data.Text.IO as Text
-import qualified Syntax.Labeled as Labeled
-import Syntax
-import Control.Monad.Except
-import MyPrelude
 import qualified Cfa
+import qualified Cps
 import qualified Defun
-import System.Environment (getArgs)
+import qualified Parser
 import Polysemy
-
+import Pretty
+import Syntax (FreshVar, runFreshVar)
+import System.Environment (getArgs)
 
 main :: IO ()
 main = do
   [file] <- getArgs
   runTest file
 
-putTextLn :: MonadIO m => Text -> m ()
-putTextLn = liftIO . Text.putStrLn
-
-runTest :: String -> IO ()
+runTest :: FilePath -> IO ()
 runTest f = runM . runFreshVar . test $ f
 
-test :: Members '[Embed IO, FreshVar] r => String -> Sem r ()
+test :: Members '[Embed IO, FreshVar] r => FilePath -> Sem r ()
 test file = do
-  pgm <- liftIO $ Text.readFile file
-  putTextLn "File read"
-  let p = Parser.run file $ pgm
-  seq p (liftIO $ putStrLn "Parsed program")
-  pprint p
-  -- pRes <- Eval.run p
-  -- pprint pRes
-  anf <- Anf.fromSource p
-  putTextLn "Transformed to ANF"
-  pprint anf
-  -- anfRes <- Eval.run anf
-  -- pprint anfRes
+  pgm <- Parser.fromFile file
+  pgm `seq` putTextLn "Parsed source"
+  anf <- Anf.fromSource pgm
+  anf `seq` putTextLn "Transformed to Anf"
   cps <- Cps.fromAnf anf
-  putTextLn "Transformed to CPS"
-  pprint cps
+  cps `seq` putTextLn "Transformed to Cps"
   (labeled, analysis) <- Cfa.analyse cps
-  pprint analysis
   defun <- Defun.fromLabeled labeled analysis
+  defun `seq` putTextLn "Defunctionalized"
   pprint defun
-  -- cpsRes <- Eval.run cps
-  -- pprint cpsRes
-  -- if cpsRes == anfRes && anfRes == pRes
-  -- then pure ()
-  -- else throwError "Mismatched results"
-  
-
+-- cpsRes <- Eval.run cps
+-- pprint cpsRes
+-- if cpsRes == anfRes && anfRes == pRes
+-- then pure ()
+-- else throwError "Mismatched results"

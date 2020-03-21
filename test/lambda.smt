@@ -19,7 +19,7 @@
   (case term
     ({var x} (env x))
     ({lam x body}
-      (fun (v) (eval (extend env x v) body)))
+     (fun (v) (eval (extend env x v) body)))
     ({app f x} ((eval env f) (eval env x)))
     ({unit} {unit})))
 

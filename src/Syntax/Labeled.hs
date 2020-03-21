@@ -4,12 +4,10 @@ module Syntax.Labeled
     Term,
     nextLabel,
     toLabeled,
-    unLabel,
   )
 where
 
 import qualified Data.Map as Map
-import MyPrelude
 import Polysemy
 import Polysemy.State
 import Syntax
@@ -40,4 +38,4 @@ toLabeled :: Member (State Label) r => Program (Tm.Term) -> Sem r Labeled
 toLabeled program = do
   (tms, Program defs decl) <- program & traverse label & runState Map.empty
   let aux (Def _ name scope) = (name, scope)
-  pure $ Labeled (Map.fromList . map aux $ defs) tms decl
+  pure $ Labeled (Map.fromList . fmap aux $ defs) tms decl

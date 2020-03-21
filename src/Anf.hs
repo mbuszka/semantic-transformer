@@ -2,9 +2,7 @@ module Anf (Anf(..), fromSource) where
 
 import Syntax
 import Syntax.Term
-import MyPrelude
 import Polysemy
-import Data.Text.Prettyprint.Doc
 
 data Anf
   = Atom (TermF Anf)

@@ -4,11 +4,11 @@ import Cfa ()
 import Control.Monad (foldM)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import MyPrelude
 import Polysemy
 import Polysemy.Output
 import Polysemy.Reader
 import Polysemy.State
+import Pretty
 import Syntax
 import Syntax.Labeled (Label (..), Labeled (..))
 import Syntax.Term
@@ -26,25 +26,23 @@ fromLabeled (Labeled definitions terms decl) analysis = do
       . runReader analysis
       . runReader (Map.keysSet definitions)
       . traverse (traverse runDefun)
-      . map aux
+      . fmap aux
       . Map.toList
       $ definitions
-  embed $ pprint applys
-  embed $ pprint lambdas
   let lambdas' = Map.fromList lambdas
   let genBody vs t@(TopTag v) =
         pure
           ( PCons (Record t []),
-            Scope [] (Term . App (Term . Var $ v) $ map (Term . Var) vs)
+            Scope [] (Term . App (Term . Var $ v) $ fmap (Term . Var) vs)
           )
       genBody vs tag = do
         let (fvs, (Scope xs b)) = lambdas' Map.! tag
         b' <- foldM sub b (xs `zip` vs)
-        pure (PCons (Record tag (map (const (PVar ())) fvs)), Scope fvs b')
+        pure (PCons (Record tag (fmap (const (PVar ())) fvs)), Scope fvs b')
   let genApply (tags, (var, f : vs)) = do
         ps <- traverse (genBody vs) . toList $ tags
         let b = Term $ Case (Term . Var $ f) (Patterns ps)
-        pure $ Def Set.empty var (Scope (f:vs) b)
+        pure $ Def Set.empty var (Scope (f : vs) b)
   newDefs <- traverse genApply . Map.toList $ applys
   pure $ Program (pgm <> newDefs) decl
   where
@@ -73,7 +71,7 @@ runDefun label@(Label x) = do
       let fvs = toList $ freeVars term' Set.\\ topVars
           tag = GenTag x
       output (tag, (fvs, s))
-      pure . Term . Cons . Record tag . map (Term . Var) $ fvs
+      pure . Term . Cons . Record tag . fmap (Term . Var) $ fvs
     Var {} -> do
       functions <- getFuns label
       case functions of
@@ -91,7 +89,7 @@ getTerm :: Member (Reader (Map Label (TermF Label))) r => Label -> Sem r (TermF 
 getTerm lbl = do
   mby <- asks (Map.lookup lbl)
   case mby of
-    Nothing -> error ("No binding for label " <> (show . pretty $ lbl))
+    Nothing -> error ("No binding for label " <> pshow lbl)
     Just t -> pure t
 
 getFuns :: Effs r => Label -> Sem r [Tag]
@@ -101,7 +99,7 @@ getFuns lbl = do
     Nothing -> do
       terms <- ask @(Map Label (TermF Label))
       pprint terms
-      error ("No analysis for label " <> (show . pretty $ lbl))
+      error ("No analysis for label " <> pshow lbl)
     Just t -> pure t
 
 getApply :: Effs r => Label -> Int -> Sem r Var

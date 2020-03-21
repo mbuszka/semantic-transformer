@@ -1,12 +1,12 @@
 module Parser
-  ( run,
+  ( fromFile,
   )
 where
 
 import Control.Monad.Writer
 import qualified Data.Char as Char
 import qualified Data.Set as Set
-import MyPrelude
+import qualified Data.Text as Text
 import Syntax
 import Syntax.Term
 import Text.Megaparsec hiding (State (..))
@@ -114,7 +114,9 @@ parseRecord subterm = braces $ do
   subterms <- many subterm
   pure $ Record name subterms
 
-run :: String -> Text -> Program Term
-run f txt = case runParser (parseProgram <* eof) f txt of
-  Left err -> error . errorBundlePretty $ err
-  Right t -> t
+fromFile :: MonadIO m => FilePath -> m (Program Term)
+fromFile f = do
+  pgm <- readFile f
+  pure case runParser (parseProgram <* eof) f pgm of
+    Left err -> error . Text.pack . errorBundlePretty $ err
+    Right t -> t

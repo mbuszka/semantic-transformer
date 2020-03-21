@@ -1,7 +1,5 @@
 module Syntax.Term where
 
-import Data.Text.Prettyprint.Doc (Pretty)
-import MyPrelude
 import Polysemy
 import Polysemy.Output
 import Syntax

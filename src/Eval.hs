@@ -1,12 +1,11 @@
 module Eval where
 
 import Control.Monad.Except
+import Control.Monad.Reader
 import qualified Data.Map as Map
-import Data.Text.Prettyprint.Doc
+import Pretty
 import Syntax
 import Syntax.Term
-import MyPrelude
-import Control.Monad.Reader
 
 data Value
   = Struct Tag [Value]
@@ -31,7 +30,7 @@ type MonadEval m = (MonadReader (Map Var (Scope Term)) m, MonadError Text m)
 
 run :: MonadError Text m => Program Term -> m Value
 run (Program defs _) =
-  let defs' = Map.fromList $ map (\case Def _ x s -> (x, s)) defs
+  let defs' = Map.fromList $ fmap (\case Def _ x s -> (x, s)) defs
       Scope [] t = defs' Map.! mkVar "main"
    in runReaderT (eval Map.empty t []) defs'
 
@@ -122,6 +121,6 @@ apply f vs ks = do
     else throwError "Wrong argument count in application"
 
 instance Pretty Value where
-  pretty (Struct c vs) = braces (hsep $ pretty c : map pretty vs)
+  pretty (Struct c vs) = braces (pretty c <> nested' 2 vs)
   pretty (Closure _ _) = "<closure>"
   pretty (TopLevel x) = "<function:" <+> pretty x <> ">"
