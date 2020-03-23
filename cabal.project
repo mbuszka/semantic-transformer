@@ -1,0 +1,6 @@
+packages:
+  ./*.cabal
+
+jobs: $ncpus
+
+optimization: 0

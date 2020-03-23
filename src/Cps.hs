@@ -1,7 +1,8 @@
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RecordWildCards #-}
 module Cps where
 
 import Syntax
-import Syntax.Term
 import Anf
 import Polysemy
 
@@ -26,15 +27,15 @@ toCps (Expr tm) k = case tm of
       _ -> do
         k' <- freshVar
         ps' <- traverse (flip toCps (Var k')) ps
-        term $ Let (Term k) (Scope [k'] (Term $ Case t' ps'))
-  Error -> term Error
+        term $ Let (Term k) (Scope [(k', Nothing)] (Term $ Case t' ps'))
+  Panic -> term Panic
 
 atomic :: Member FreshVar r => TermF Anf -> Sem r Term
 atomic (Var v) = pure . Term $ Var v
 atomic (Abs (Scope xs t)) = do
   k' <- freshVar
   t' <- toCps t (Var k')
-  pure . Term . Abs $ Scope (xs <> [k']) t'
+  pure . Term . Abs $ Scope (xs <> [(k', Nothing)]) t'
 atomic (Cons r) = Term . Cons <$> traverse atomic' r
 atomic _ = error "Unexpected term after Anf"
 
@@ -43,16 +44,16 @@ atomic' (Atom t) = atomic t
 atomic' _ = error "Expected subexpression to be an atom"
 
 fromAnf :: Member FreshVar r => Program Anf -> Sem r (Program Term)
-fromAnf (Program defs dt) = Program <$> traverse aux defs <*> pure dt
+fromAnf pgm@(Program {..}) = do
+  defs <- traverse aux pgmDefinitions
+  main <- do
+    a <- freshVar
+    let k = Abs . Scope [(a, Nothing)] . Term $ Var a
+    traverse (flip toCps k) pgmMain
+  pure $ Program { pgmDefinitions = defs, pgmMain = main, pgmTests, pgmDatatypes}
   where
     aux :: Member FreshVar r => Def Anf -> Sem r (Def Term)
-    aux (Def as x (Scope xs t))
-      | x == mkVar "main" = do
-        a <- freshVar
-        let k = Abs . Scope [a] . Term $ Var a
-        t' <- toCps t k
-        pure (Def as x (Scope xs t'))
-      | otherwise = do
+    aux (Def as (Scope xs t)) = do
         k <- freshVar
         t' <- toCps t (Var k)
-        pure (Def as x (Scope (xs <> [k]) t'))
+        pure (Def as (Scope (xs <> [(k, Nothing)]) t'))

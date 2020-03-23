@@ -1,9 +1,11 @@
+{-# LANGUAGE RecordWildCards #-}
+
 module Syntax
   ( Annot (..),
     Bound (..),
-    DataDecl (..),
     Def (..),
     FreshVar,
+    Located (..),
     Pattern (..),
     Patterns (..),
     Pretty (..),
@@ -11,8 +13,12 @@ module Syntax
     Record (..),
     Scope (..),
     Tag (..),
+    Term (..),
     TermF (..),
-    Var,
+    TestCase (..),
+    Tp (..),
+    Value (..),
+    Var (..),
     extractNames,
     freshVar,
     mkVar,
@@ -23,24 +29,33 @@ where
 
 import Control.Monad.State
 import Data.IORef
+import qualified Data.Map as Map
 import qualified Data.Set as Set
+import qualified Data.Text as Text
 import Polysemy
 import Pretty
+import Util
 
-data Program t = Program [Def t] DataDecl
+data Program t
+  = Program
+      { pgmDefinitions :: Map Var (Def t),
+        pgmDatatypes :: Map Text [Record Text],
+        pgmTests :: [TestCase],
+        pgmMain :: Def t
+      }
   deriving (Functor, Foldable, Traversable)
 
-data Def t = Def (Set Annot) Var (Scope t)
+data Def t = Def (Set Annot) (Scope t)
   deriving (Functor, Foldable, Traversable)
 
 data Annot
   = NoCps
   deriving (Eq, Ord)
 
-data DataDecl = DataDecl Text [Record Text]
+data TestCase = TestCase Text [Value] Value
 
 data Record t = Record Tag [t]
-  deriving (Eq, Ord, Functor, Foldable, Traversable)
+  deriving (Eq, Ord, Functor, Foldable, Traversable, Show)
 
 data TermF t
   = Var Var
@@ -49,7 +64,7 @@ data TermF t
   | Let t (Scope t)
   | Case t (Patterns t)
   | Cons (Record t)
-  | Error
+  | Panic
   deriving (Functor, Foldable, Traversable)
 
 data Pattern v
@@ -62,41 +77,71 @@ newtype Patterns t = Patterns [(Pattern (), Scope t)]
   deriving (Functor, Foldable, Traversable, Eq, Ord)
 
 data Var = SrcVar Text | GenVar Int
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Show)
 
 data Tag = SrcTag Text | GenTag Int | TopTag Var
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Show)
 
-data Scope t = Scope [Var] t
+newtype Tp = Tp Text
+  deriving (Eq, Ord, Pretty)
+
+data Scope t = Scope [(Var, Maybe Tp)] t
   deriving (Eq, Ord, Functor, Foldable, Traversable)
 
-data FreshVar m a where
-  FreshVar :: FreshVar m Var
+data Value
+  = Number Int
+  | String Text
+  | Struct (Record Value)
 
-$(makeSem ''FreshVar)
+-- Various syntax representations
+newtype Term = Term {unTerm :: TermF Term}
+  deriving (Bound, Pretty)
 
--- Handling of scoping rules
+data Located = Located {locatedLoc :: Loc, locatedTerm :: TermF Located}
+
+forget :: Located -> Term
+forget (Located _ t) = Term (fmap forget t)
+
+-- Handling of bound variables
 class Bound t where
   freeVars :: t -> Set Var
 
+  rename :: Map Var Var -> t -> t
+
 instance Bound t => Bound (Scope t) where
-  freeVars (Scope vs t) = freeVars t Set.\\ Set.fromList vs
+  freeVars (Scope vs t) = freeVars t Set.\\ (Set.fromList . fmap fst $ vs)
+
+  rename vars (Scope vs t) =
+    let bound = Set.fromList (fmap fst vs)
+        vars' = Map.withoutKeys vars bound
+     in if Set.fromList (toList vars') `Set.disjoint` bound
+          then Scope vs (rename vars' t)
+          else error "Free variable would become bound by renaming"
 
 instance Bound t => Bound (Record t) where
   freeVars (Record _ ts) = foldMap freeVars ts
+
+  rename vars = fmap (rename vars)
 
 instance Bound t => Bound (TermF t) where
   freeVars term = case term of
     Var v -> Set.singleton v
     Abs s -> freeVars s
-    App f xs -> foldMap freeVars (f : xs)
     Let t s -> freeVars t `Set.union` freeVars s
     Case t ps -> freeVars t `Set.union` freeVars ps
-    Cons r -> freeVars r
-    Error -> Set.empty
+    _ -> foldMap freeVars term
+
+  rename vars term = case term of
+    Var v -> Var $ Map.findWithDefault v v vars
+    Abs s -> Abs $ rename vars s
+    Let t s -> Let (rename vars t) (rename vars s)
+    Case t ps -> Case (rename vars t) (rename vars ps)
+    _ -> fmap (rename vars) term
 
 instance Bound t => Bound (Patterns t) where
   freeVars (Patterns ps) = foldMap (freeVars . snd) ps
+
+  rename vars (Patterns ps) = Patterns (fmap (fmap (rename vars)) ps)
 
 -- Pattern helpers
 extractNames :: Pattern Var -> (Pattern (), [Var])
@@ -111,18 +156,6 @@ insertNames pattern variables = case go pattern variables of
     go (PVar _) [] = error "Mismatched pattern variables"
     go PWild vs = (PWild, vs)
     go (PCons r) vs = runState (PCons <$> traverse (state . go) r) vs
-
-runFreshVar :: Member (Embed IO) r => Sem (FreshVar ': r) a -> Sem r a
-runFreshVar sem = do
-  ref <- embed $ newIORef (0 :: Int)
-  interpret
-    ( \case
-        FreshVar -> do
-          x <- embed $ readIORef ref
-          embed $ writeIORef ref (x + 1)
-          return (GenVar x)
-    )
-    sem
 
 mkVar :: Text -> Var
 mkVar = SrcVar
@@ -143,13 +176,34 @@ instance Pretty t => Pretty (TermF t) where
 instance Pretty Annot where
   pretty NoCps = "@no-cps"
 
-instance Pretty t => Pretty (Def t) where
-  pretty (Def _ann v (Scope vs t)) =
-    parens ("def" <+> pretty v <> body (variables vs) (pretty t))
-
 instance Pretty t => Pretty (Program t) where
-  pretty (Program defs _) =
-    rows . fmap (\d -> pretty d <> hardline) $ defs
+  pretty (Program {..}) =
+    types <> hardline <> main <> hardline <> defs <> hardline <> tests
+    where
+      defs = rows . fmap def . Map.toList $ pgmDefinitions
+      def (name, Def _ (Scope vs t)) =
+        hardline
+          <> parens ("def" <+> pretty name <> body (variables vs) (pretty t))
+      types = rows . fmap typ . Map.toList $ pgmDatatypes
+      typ (name, records) =
+        parens
+          ( "def-data"
+              <+> pretty name <> nested 2 (rows . fmap pretty $ records)
+          )
+          <> hardline
+      main = parens ("def main" <> body (variables mvs) (pretty mt))
+      Def _ (Scope mvs mt) = pgmMain
+      tests = rows . fmap pretty $ pgmTests
+
+instance Pretty Value where
+  pretty (Number n) = pretty n
+  pretty (String s) = escape s
+  pretty (Struct r) = pretty r
+
+instance Pretty TestCase where
+  pretty (TestCase desc inputs output) =
+    let vs = aligned' [parens (aligned inputs), pretty output]
+     in parens ("def-test" <+> escape desc <> nested 2 vs)
 
 instance Pretty t => Pretty (Patterns t) where
   pretty (Patterns ps) = case ps of
@@ -158,7 +212,7 @@ instance Pretty t => Pretty (Patterns t) where
     _ -> rows . fmap pat $ ps
     where
       pat (p, Scope vs t) =
-        parens (pretty (insertNames p vs) <> nested 1 (pretty t))
+        parens (pretty (insertNames p . fmap fst $ vs) <> nested 1 (pretty t))
 
 instance Pretty t => Pretty (Record t) where
   pretty (Record c ts) = braces (pretty c <> (nested' 2 ts))
@@ -185,8 +239,29 @@ prettyTerm term = case term of
     pretty r
   Case t ps ->
     parens ("case" <> body (pretty t) (pretty ps))
-  Error -> "error"
+  Panic -> "panic"
   _ -> error "Unexpected syntax"
 
-variables :: [Var] -> Doc ann
-variables = parens . aligned
+variables :: [(Var, Maybe Tp)] -> Doc ann
+variables = parens . aligned' . fmap aux
+  where
+    aux (v, Nothing) = pretty v
+    aux (v, Just tp) = brackets . aligned' $ [pretty v, pretty tp]
+
+-- Fresh variable generation
+data FreshVar m a where
+  FreshVar :: FreshVar m Var
+
+$(makeSem ''FreshVar)
+
+runFreshVar :: Member (Embed IO) r => Sem (FreshVar ': r) a -> Sem r a
+runFreshVar sem = do
+  ref <- embed $ newIORef (0 :: Int)
+  interpret
+    ( \case
+        FreshVar -> do
+          x <- embed $ readIORef ref
+          embed $ writeIORef ref (x + 1)
+          return (GenVar x)
+    )
+    sem

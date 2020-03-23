@@ -1,6 +1,7 @@
 module Prelude
   ( module Control.Applicative,
     module Control.Monad,
+    module Control.Monad.IO.Class,
     module Data.Either,
     module Data.Foldable,
     module Data.Function,
@@ -11,6 +12,7 @@ module Prelude
     module Data.Monoid,
     module Data.Semigroup,
     module Data.Set,
+    module Data.Sequence,
     module Data.Text,
     module Data.Text.Prettyprint.Doc,
     module Data.Traversable,
@@ -19,6 +21,8 @@ module Prelude
     module GHC.Base,
     module GHC.IO,
     module GHC.Num,
+    module GHC.Show,
+    module Polysemy,
     error,
     pprint,
     pprint',
@@ -34,7 +38,7 @@ import Control.Applicative
     liftA2,
     liftA3,
   )
-import Control.Monad ((<=<), (=<<), (>=>))
+import Control.Monad ((<=<), (=<<), (>=>), mfilter, forM_)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Either (Either (..))
 import Data.Foldable (Foldable (..), toList)
@@ -45,6 +49,7 @@ import Data.Map (Map)
 import Data.Maybe (Maybe (..))
 import Data.Monoid (Monoid (..))
 import Data.Semigroup ((<>), Semigroup)
+import Data.Sequence (Seq (..))
 import Data.Set (Set)
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -65,6 +70,7 @@ import GHC.Base
     Maybe (..),
     Monad (..),
     Ord (..),
+    Type,
     flip,
     not,
     otherwise,
@@ -74,7 +80,9 @@ import GHC.Base
 import qualified GHC.Base as Base
 import GHC.IO (FilePath)
 import GHC.Num ((*), (+), (-), Num)
+import GHC.Show (Show (show))
 import GHC.Stack (HasCallStack)
+import Polysemy
 
 pprint' :: MonadIO m => Doc ann -> m ()
 pprint' = liftIO . Text.putStrLn . pshow'

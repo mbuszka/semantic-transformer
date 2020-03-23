@@ -26,16 +26,16 @@ executable semt
   main-is:             Main.hs
   other-modules:
     Anf
-    Cfa
+    -- Cfa
     Cps
-    Defun
+    -- Defun
     Eval
     Parser
     Prelude
     Pretty
     Syntax
-    Syntax.Labeled
-    Syntax.Term
+    Util
+    -- Syntax.Labeled
   default-extensions:
     BlockArguments
     ConstraintKinds
@@ -80,6 +80,5 @@ executable semt
     -with-rtsopts=-N
     -- -Wall
     -fplugin=Polysemy.Plugin
-    -O2
     -flate-specialise
     -fspecialise-aggressively

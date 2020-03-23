@@ -23,7 +23,11 @@
     ({app f x} ((eval env f) (eval env x)))
     ({unit} {unit})))
 
-(def init (x) error)
+(def init (x) panic)
 
-(def main (term)
+(def main ([term expr])
   (eval init term))
+
+(def-test "unit evaluates to unit"
+  ({unit})
+  {unit})
