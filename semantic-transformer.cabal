@@ -26,16 +26,16 @@ executable semt
   main-is:             Main.hs
   other-modules:
     Anf
-    -- Cfa
     Cps
-    -- Defun
+    Defun
+    Defun.Cfa
+    Defun.Labeled
     Eval
     Parser
     Prelude
     Pretty
     Syntax
     Util
-    -- Syntax.Labeled
   default-extensions:
     BlockArguments
     ConstraintKinds
@@ -52,6 +52,8 @@ executable semt
     OverloadedStrings
     PolyKinds
     RankNTypes
+    RecordWildCards
+    NamedFieldPuns
     ScopedTypeVariables
     StandaloneDeriving
     TemplateHaskell
@@ -63,7 +65,7 @@ executable semt
     , containers
     , polysemy
     , polysemy-plugin
-    , lens
+    -- , lens
     , megaparsec
     , mtl
     , optparse-applicative
@@ -78,7 +80,8 @@ executable semt
     -threaded
     -rtsopts
     -with-rtsopts=-N
-    -- -Wall
+    -Wall
+    -- -Wno-name-shadowing
     -fplugin=Polysemy.Plugin
     -flate-specialise
     -fspecialise-aggressively

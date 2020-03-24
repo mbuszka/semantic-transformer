@@ -21,7 +21,7 @@ type Parser a = Parsec Void Text a
 
 data TopLevel
   = TDef Loc (Var, Def Term)
-  | TData Loc (Text, [Record Text])
+  | TData Loc (Tp, [Record Tp])
   | TTest TestCase
 
 keywords :: [Text]
@@ -67,11 +67,17 @@ tag = SrcTag <$> ident
 var :: Parser Var
 var = mkVar <$> ident
 
+typ :: Parser Tp
+typ = ident <&> \case
+    "integer" -> TInt
+    "string" -> TStr
+    t -> TStruct t
+
 typed :: Parser (Var, Maybe Tp)
 typed = fmap (,Nothing) var <|> brackets do
   v <- var
-  tp <- ident
-  pure (v, Just (Tp tp))
+  tp <- typ
+  pure (v, Just tp)
 
 mkTerm :: TermF Term -> Parser Term
 mkTerm = pure . Term
@@ -126,10 +132,10 @@ parseDef = do
   t <- parseTerm
   pure (x, Def as (Scope xs t))
 
-parseData :: Parser (Text, [Record Text])
+parseData :: Parser (Tp, [Record Tp])
 parseData = do
-  name <- keyword "def-data" >> ident
-  records <- many $ parseRecord ident
+  name <- keyword "def-data" >> typ
+  records <- many $ parseRecord typ
   pure (name, records)
 
 stringLiteral :: Parser Text
@@ -169,7 +175,7 @@ validateProgram ts = do
     Program
       { pgmDefinitions = defs,
         pgmDatatypes = types,
-        pgmTests = tests,
+        pgmTests = reverse tests,
         pgmMain = main
       }
   where

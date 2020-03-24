@@ -12,11 +12,13 @@ module Pretty
     escape,
     hardline,
     parens,
+    pmap,
   )
 where
 
-import Data.Text.Prettyprint.Doc
 import qualified Data.Text as Text
+import qualified Data.Map as Map
+import Data.Text.Prettyprint.Doc
 
 rows :: [Doc ann] -> Doc ann
 rows = concatWith (\x y -> x <> hardline <> y)
@@ -42,3 +44,9 @@ aligned' = align . sep
 
 escape :: Text -> Doc ann
 escape = pretty . show . Text.unpack
+
+pmap :: (Pretty k, Pretty v) => Map k v -> Doc ann
+pmap =
+  aligned'
+    . fmap (\case (l, t) -> pretty l <+> "->" <+> pretty t)
+    . Map.toList

@@ -1,9 +1,8 @@
 module Main where
 
 import qualified Anf
--- import qualified Cfa
 import qualified Cps
--- import qualified Defun
+import qualified Defun
 import qualified Parser
 import qualified Eval
 import Polysemy.Error
@@ -27,7 +26,7 @@ runTest f = do
 runTests :: MonadIO m => Program Term -> m ()
 runTests pgm = do
   putTextLn ""
-  forM_ (Eval.tests pgm) \case 
+  for_ (Eval.tests pgm) \case 
     (name, res) -> do
       pprint' $
         "Running test:" <+> pretty name <+> "..." <> nested 2 (pretty res) <> hardline
@@ -47,12 +46,7 @@ test file = do
   cps `seq` putTextLn "Transformed to Cps"
   pprint cps
   runTests cps
--- (labeled, analysis) <- Cfa.analyse cps
--- defun <- Defun.fromLabeled labeled analysis
--- defun `seq` putTextLn "Defunctionalized"
--- pprint defun
--- cpsRes <- Eval.run cps
--- pprint cpsRes
--- if cpsRes == anfRes && anfRes == pRes
--- then pure ()
--- else throwError "Mismatched results"
+  def <- Defun.fromSource cps
+  def `seq` putTextLn "Defunctionalized"
+  pprint def
+  runTests def

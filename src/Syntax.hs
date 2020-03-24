@@ -39,13 +39,13 @@ import Util
 data Program t
   = Program
       { pgmDefinitions :: Map Var (Def t),
-        pgmDatatypes :: Map Text [Record Text],
+        pgmDatatypes :: Map Tp [Record Tp],
         pgmTests :: [TestCase],
         pgmMain :: Def t
       }
   deriving (Functor, Foldable, Traversable)
 
-data Def t = Def (Set Annot) (Scope t)
+data Def t = Def { defAnnotations :: Set Annot, defScope :: Scope t }
   deriving (Functor, Foldable, Traversable)
 
 data Annot
@@ -82,8 +82,11 @@ data Var = SrcVar Text | GenVar Int
 data Tag = SrcTag Text | GenTag Int | TopTag Var
   deriving (Eq, Ord, Show)
 
-newtype Tp = Tp Text
-  deriving (Eq, Ord, Pretty)
+data Tp 
+  = TStruct Text
+  | TInt
+  | TStr
+  deriving (Eq, Ord)
 
 data Scope t = Scope [(Var, Maybe Tp)] t
   deriving (Eq, Ord, Functor, Foldable, Traversable)
@@ -224,6 +227,11 @@ instance Pretty Tag where
   pretty (SrcTag c) = pretty c
   pretty (GenTag lbl) = "lam-" <> pretty lbl
   pretty (TopTag v) = pretty v
+
+instance Pretty Tp where
+  pretty (TStruct t) = pretty t
+  pretty TInt = "integer"
+  pretty TStr = "string"
 
 prettyTerm :: Pretty t => TermF t -> Doc ann
 prettyTerm term = case term of

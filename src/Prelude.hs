@@ -38,10 +38,10 @@ import Control.Applicative
     liftA2,
     liftA3,
   )
-import Control.Monad ((<=<), (=<<), (>=>), mfilter, forM_)
+import Control.Monad ((<=<), (=<<), (>=>), mfilter)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Either (Either (..))
-import Data.Foldable (Foldable (..), toList)
+import Data.Foldable (Foldable (..), toList, traverse_, for_)
 import Data.Function ((&), (.), const)
 import Data.Functor (($>), (<$>), (<&>), Functor (..), void)
 import Data.List (reverse, take, zip)
@@ -57,7 +57,7 @@ import qualified Data.Text.IO as Text
 import Data.Text.Prettyprint.Doc (Doc, Pretty (..))
 import qualified Data.Text.Prettyprint.Doc as PP
 import Data.Text.Prettyprint.Doc.Render.Text (renderStrict)
-import Data.Traversable (Traversable (..))
+import Data.Traversable (Traversable (..), for)
 import Data.Tuple (fst, snd)
 import Data.Void (Void)
 import GHC.Base

@@ -1,53 +1,21 @@
-module Defun where
+{-# LANGUAGE TupleSections #-}
 
-import Cfa ()
+module Defun
+  ( fromSource,
+  )
+where
+
 import Control.Monad (foldM)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+import Defun.Cfa
+import Defun.Labeled hiding (fromSource)
 import Polysemy
 import Polysemy.Output
 import Polysemy.Reader
 import Polysemy.State
 import Pretty
 import Syntax
-import Syntax.Labeled (Label (..), Labeled (..))
-import Syntax.Term
-
-fromLabeled ::
-  Members '[FreshVar, Embed IO] r =>
-  Labeled ->
-  Map Label [Tag] ->
-  Sem r (Program Term)
-fromLabeled (Labeled definitions terms decl) analysis = do
-  (lambdas, (applys, pgm)) <-
-    runOutputList
-      . runState Map.empty
-      . runReader terms
-      . runReader analysis
-      . runReader (Map.keysSet definitions)
-      . traverse (traverse runDefun)
-      . fmap aux
-      . Map.toList
-      $ definitions
-  let lambdas' = Map.fromList lambdas
-  let genBody vs t@(TopTag v) =
-        pure
-          ( PCons (Record t []),
-            Scope [] (Term . App (Term . Var $ v) $ fmap (Term . Var) vs)
-          )
-      genBody vs tag = do
-        let (fvs, (Scope xs b)) = lambdas' Map.! tag
-        b' <- foldM sub b (xs `zip` vs)
-        pure (PCons (Record tag (fmap (const (PVar ())) fvs)), Scope fvs b')
-  let genApply (tags, (var, f : vs)) = do
-        ps <- traverse (genBody vs) . toList $ tags
-        let b = Term $ Case (Term . Var $ f) (Patterns ps)
-        pure $ Def Set.empty var (Scope (f : vs) b)
-  newDefs <- traverse genApply . Map.toList $ applys
-  pure $ Program (pgm <> newDefs) decl
-  where
-    aux (name, scope) = Def mempty name scope
-    sub t (x, y) = subst x (Var y) t
 
 type Effs r =
   Members
@@ -60,6 +28,44 @@ type Effs r =
        FreshVar
      ]
     r
+
+fromSource ::
+  Members '[FreshVar, Embed IO] r => Program Term -> Sem r (Program Term)
+fromSource program = do
+  (AbsPgm {..}, analysis) <- analyse program
+  pprint' (pmap . fmap (defScope . fmap (toDbg apgmTerms)) $ apgmDefinitions)
+  (lambdas, (applys, (pgm, pgmMain))) <-
+    runOutputList
+      . runState Map.empty
+      . runReader apgmTerms
+      . runReader analysis
+      . runReader (Map.keysSet apgmDefinitions)
+      $ do
+        ds <- traverse (traverse runDefun) apgmDefinitions
+        m' <- traverse runDefun apgmMain
+        pure (ds, m')
+  let lambdas' = Map.fromList lambdas
+  let genBody vs t@(TopTag v) =
+        pure
+          ( PCons (Record t []),
+            Scope [] (Term . App (Term . Var $ v) $ fmap (Term . Var) vs)
+          )
+      genBody vs tag = do
+        let (fvs, (Scope xs b)) = lambdas' Map.! tag
+        let b' = foldl' sub b (fmap fst xs `zip` vs)
+        pure (PCons (Record tag (fmap (const (PVar ())) fvs)), Scope (fmap (,Nothing) fvs) b')
+  let genApply (tags, (var, f : vs)) = do
+        ps <- traverse (genBody vs) . toList $ tags
+        let b = Term $ Case (Term . Var $ f) (Patterns ps)
+        let vars = fmap (,Nothing) (f : vs)
+        pure $ (var, Def Set.empty (Scope vars b))
+  newDefs <- traverse genApply . Map.toList $ applys
+  let pgmDefinitions = pgm `Map.union` Map.fromList newDefs
+  let pgmTests = apgmTests
+  let pgmDatatypes = apgmDatatypes
+  pure $ Program {..}
+  where
+    sub t (x, y) = rename (Map.singleton x y) t
 
 runDefun :: Effs r => Label -> Sem r Term
 runDefun label@(Label x) = do
@@ -98,7 +104,6 @@ getFuns lbl = do
   case mby of
     Nothing -> do
       terms <- ask @(Map Label (TermF Label))
-      pprint terms
       error ("No analysis for label " <> pshow lbl)
     Just t -> pure t
 
