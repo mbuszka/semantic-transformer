@@ -1,5 +1,3 @@
-{-# LANGUAGE TupleSections #-}
-
 module Defun.Cfa
   ( analyse,
   )
@@ -11,17 +9,17 @@ import Data.List (nub)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Defun.Labeled
+import Polysemy.Error
 import Polysemy.NonDet
 import Polysemy.Reader
 import Polysemy.State
-import Pretty
+import Pretty hiding (body)
+import Util
 
 data Config
   = Eval Env Label ContPtr
   | Continue ValuePtr ContPtr
   deriving (Eq, Ord)
-
-type Res = (Store Value, Store Cont, Config)
 
 type Terms = Reader (Map Label Labeled)
 
@@ -96,7 +94,7 @@ continue :: Effs r => ValuePtr -> ContPtr -> Sem r Config
 continue vPtr kPtr = do
   derefK kPtr >>= \case
     EvalApp env vs es dst k -> do
-      -- copy vPtr dst
+      when (null vs) (copy vPtr dst)
       case es of
         e : es' -> do
           k' <- insertK e $ EvalApp env (vPtr : vs) es' (CacheDst e) k
@@ -105,7 +103,7 @@ continue vPtr kPtr = do
           let f : as = reverse (vPtr : vs)
           apply f as k
     Halt -> empty
-    EvalCons lbl c env vs es dst k -> do
+    EvalCons lbl c env vs es _dst k -> do
       -- copy vPtr dst
       case es of
         e : es' -> do
@@ -114,7 +112,7 @@ continue vPtr kPtr = do
         [] -> do
           cPtr <- insertV lbl $ Struct (Record c (reverse $ vPtr : vs))
           pure $ Continue cPtr k
-    EvalCase env ps dst k -> do
+    EvalCase env ps _dst k -> do
       -- copy vPtr dst
       applyCases env vPtr ps k
 
@@ -164,19 +162,21 @@ format = Map.fromList . fmap aux . Map.toList
     fmt (Closure (Label l) _ _ _) = [GenTag l]
     fmt _ = []
 
-analyse :: Member (Embed IO) r => Program Term -> Sem r (AbsPgm, Map Label [Tag])
+analyse ::
+  Members '[Embed IO, Error Err] r => Program Term -> Sem r (Abstract, Map Label [Tag])
 analyse program = do
-  let abs@(AbsPgm {..}) = fromSource program
-      go s n = do
+  abstract@(Abstract {..}) <- fromSource program
+  let Program {..} = abstractProgram
+  let go s n = do
         s' <- step s
         if s == s'
           then pure s
           else go s' (n + 1)
-      Def _ (Scope _ main) = apgmMain
-      conf = Set.singleton (Eval apgmInitEnv main (ContPtr main))
+      Def _ (Scope _ main) = programMain
+      conf = Set.singleton (Eval abstractInitEnv main (ContPtr main))
   (Store vStore, _, _) <-
-    runReader (fmap defScope apgmDefinitions)
-      . runReader apgmTerms
-      $ go (apgmDataStore, apgmContStore, conf) (0 :: Int)
+    runReader (fmap defScope (programDefinitions))
+      . runReader abstractTerms
+      $ go (abstractDataStore, abstractContStore, conf) (0 :: Int)
   pprint' $ pmap (fmap toList vStore)
-  pure (abs, format vStore)
+  pure (abstract, format vStore)

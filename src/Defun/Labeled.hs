@@ -1,6 +1,6 @@
 module Defun.Labeled
   ( module Syntax,
-    AbsPgm (..),
+    Abstract (..),
     CacheDst (..),
     Cont (..),
     ContPtr (..),
@@ -19,21 +19,19 @@ where
 
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import Polysemy
+import Polysemy.Error
 import Polysemy.State
 import Pretty
 import Syntax hiding (Value (..))
+import Util
 
-data AbsPgm
-  = AbsPgm
-      { apgmDefinitions :: Map Var (Def Label),
-        apgmTerms :: Map Label Labeled,
-        apgmDatatypes :: Map Tp [Record Tp],
-        apgmTests :: [TestCase],
-        apgmMain :: Def Label,
-        apgmInitEnv :: Env,
-        apgmDataStore :: Store Value,
-        apgmContStore :: Store Cont
+data Abstract
+  = Abstract
+      { abstractProgram :: Program Label,
+        abstractTerms :: Map Label Labeled,
+        abstractInitEnv :: Env,
+        abstractDataStore :: Store Value,
+        abstractContStore :: Store Cont
       }
 
 data Value
@@ -71,7 +69,7 @@ type Effs r = Members '[State Label, State (Map Label Labeled)] r
 data Dbg = Dbg Label (TermF Dbg)
 
 insert' :: Ord v => Label -> v -> Store v -> Store v
-insert' lbl v (Store vals) = 
+insert' lbl v (Store vals) =
   Store (Map.insertWith (<>) lbl (Set.singleton v) vals)
 
 insert :: (Member (State (Store v)) r, Ord v) => Label -> v -> Sem r ()
@@ -90,35 +88,34 @@ label (Term t) = do
   modify (Map.insert lbl t')
   pure lbl
 
-fromSource :: Program Term -> AbsPgm
-fromSource = run . evalState (Label 0) . fromSource'
+fromSource :: Members '[Error Err] r => Program Term -> Sem r Abstract
+fromSource = evalState (Label 0) . fromSource'
 
-fromSource' :: Member (State Label) r => Program Term -> Sem r AbsPgm
+fromSource' ::
+  Members '[Error Err, State Label] r => Program Term -> Sem r Abstract
 fromSource' pgm = do
-  (apgmTerms, Program {..}) <- runState Map.empty . traverse label $ pgm
-  pgmDtps <- traverse (const nextLabel) pgmDatatypes
-  (apgmDataStore, dtps) <- runState (Store Map.empty) do
+  (abstractTerms, abstractProgram) <- runState Map.empty . traverse label $ pgm
+  let Program {..} = abstractProgram
+  pgmDtps <- traverse (const nextLabel) programDatatypes
+  (abstractDataStore, dtps) <- runState (Store Map.empty) do
     baseDtps <- for [(TStr, String), (TInt, Number)] \case
       (name, value) -> do
         lbl <- nextLabel
         insert lbl value
         pure (name, lbl)
     let dtps = Map.union (Map.fromList baseDtps) pgmDtps
-    for_ (Map.toList pgmDatatypes) \case
+    for_ (Map.toList programDatatypes) \case
       (name, records) -> do
         let rs' = fmap (Struct . fmap (ValuePtr . (dtps Map.!))) records
             lbl = dtps Map.! name
         traverse_ (insert lbl) rs'
     pure dtps
-  let Def _ (Scope xs main) = pgmMain
-  let apgmContStore = Store (Map.singleton main (Set.singleton Halt))
-  let apgmInitEnv =
-        Map.fromList (xs <&> \case (x, Just t) -> (x, ValuePtr (dtps Map.! t)))
-  let apgmDefinitions = pgmDefinitions
-  let apgmDatatypes = pgmDatatypes
-  let apgmTests = pgmTests
-  let apgmMain = pgmMain
-  pure $ AbsPgm {..}
+  let Def _ (Scope xs main) = programMain
+  let abstractContStore = Store (Map.singleton main (Set.singleton Halt))
+  let aux (_, Nothing) = throw (ModuleError "Missing type annotation in main")
+      aux (x, Just t) = pure (x, ValuePtr (dtps Map.! t))
+  abstractInitEnv <- fmap Map.fromList (traverse aux xs)
+  pure $ Abstract {..}
 
 toDbg :: Map Label Labeled -> Label -> Dbg
 toDbg terms lbl = Dbg lbl (fmap (toDbg terms) (terms Map.! lbl))
@@ -131,7 +128,7 @@ instance Pretty Value where
   pretty Number = "number"
 
 instance Pretty Cont where
-  pretty (EvalApp _ vs es _ k) = parens ("EvalApp" <> pretty k)
+  pretty (EvalApp _ _ _ _ k) = parens ("EvalApp" <> pretty k)
   pretty Halt = "Halt"
   pretty (EvalCons _ _ _ _ _ _ k) = parens ("EvalCons" <+> pretty k)
   pretty (EvalCase _ _ _ k) = parens ("EvalCase" <+> pretty k)

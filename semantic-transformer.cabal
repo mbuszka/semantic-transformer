@@ -49,6 +49,7 @@ executable semt
     GeneralizedNewtypeDeriving
     LambdaCase
     MultiParamTypeClasses
+    OverloadedLabels
     OverloadedStrings
     PolyKinds
     RankNTypes
@@ -57,6 +58,7 @@ executable semt
     ScopedTypeVariables
     StandaloneDeriving
     TemplateHaskell
+    TupleSections
     TypeApplications
     TypeFamilies
     TypeOperators
@@ -65,7 +67,6 @@ executable semt
     , containers
     , polysemy
     , polysemy-plugin
-    -- , lens
     , megaparsec
     , mtl
     , optparse-applicative

@@ -38,7 +38,7 @@ import Control.Applicative
     liftA2,
     liftA3,
   )
-import Control.Monad ((<=<), (=<<), (>=>), mfilter)
+import Control.Monad ((<=<), (=<<), (>=>), mfilter, when)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Either (Either (..))
 import Data.Foldable (Foldable (..), toList, traverse_, for_)

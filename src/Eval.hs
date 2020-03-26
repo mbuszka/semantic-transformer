@@ -1,5 +1,3 @@
-{-# LANGUAGE RecordWildCards #-}
-
 module Eval
   ( tests,
   )
@@ -51,8 +49,8 @@ data TestResult
 
 tests :: Program Term -> [(Text, TestResult)]
 tests Program {..} =
-  let defs = fmap (\case Def _ s -> s) pgmDefinitions
-      Def _ (Scope xs main) = pgmMain
+  let defs = fmap (\case Def _ s -> s) programDefinitions
+      Def _ (Scope xs main) = programMain
       evalTest (TestCase name inputs output) =
         ( name,
           case fmap fst xs `zip'` fmap inject inputs of
@@ -66,7 +64,7 @@ tests Program {..} =
                         then Success
                         else Failure output v
         )
-   in fmap evalTest pgmTests
+   in fmap evalTest programTests
 
 lookup :: Effs r => Env -> Var -> Sem r Value
 lookup env x = case env Map.!? x of

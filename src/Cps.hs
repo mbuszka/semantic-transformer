@@ -1,10 +1,7 @@
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RecordWildCards #-}
 module Cps where
 
 import Syntax
 import Anf
-import Polysemy
 
 term :: TermF Term -> Sem r Term
 term = pure . Term
@@ -29,6 +26,7 @@ toCps (Expr tm) k = case tm of
         ps' <- traverse (flip toCps (Var k')) ps
         term $ Let (Term k) (Scope [(k', Nothing)] (Term $ Case t' ps'))
   Panic -> term Panic
+  _ -> error "Unexpected term inside Expr"
 
 atomic :: Member FreshVar r => TermF Anf -> Sem r Term
 atomic (Var v) = pure . Term $ Var v
@@ -44,13 +42,13 @@ atomic' (Atom t) = atomic t
 atomic' _ = error "Expected subexpression to be an atom"
 
 fromAnf :: Member FreshVar r => Program Anf -> Sem r (Program Term)
-fromAnf pgm@(Program {..}) = do
-  defs <- traverse aux pgmDefinitions
+fromAnf Program {..} = do
+  defs <- traverse aux (programDefinitions)
   main <- do
     a <- freshVar
     let k = Abs . Scope [(a, Nothing)] . Term $ Var a
-    traverse (flip toCps k) pgmMain
-  pure $ Program { pgmDefinitions = defs, pgmMain = main, pgmTests, pgmDatatypes}
+    traverse (flip toCps k) (programMain)
+  pure $ Program { programDefinitions = defs, programMain = main, .. }
   where
     aux :: Member FreshVar r => Def Anf -> Sem r (Def Term)
     aux (Def as (Scope xs t)) = do

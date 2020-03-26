@@ -1,5 +1,3 @@
-{-# LANGUAGE TupleSections #-}
-
 module Parser
   ( fromFile,
   )
@@ -114,7 +112,7 @@ parseCase :: Parser (Pattern (), Scope Term)
 parseCase = parens $ do
   (p, xs) <- extractNames <$> pattern
   t <- parseTerm
-  pure (p, Scope (fmap (,Nothing) xs) t)
+  pure (p, scope xs t)
   where
     pattern =
       (PCons <$> parseRecord pattern)
@@ -153,8 +151,7 @@ parseValue =
 
 parseTestCase :: Parser TestCase
 parseTestCase = do
-  keyword "def-test"
-  desc <- stringLiteral
+  desc <- keyword "def-test" >> stringLiteral
   inputs <- parens (many parseValue)
   output <- parseValue
   pure $ TestCase desc inputs output
@@ -168,15 +165,16 @@ parseTopLevel = do
       <|> (TTest <$> parseTestCase)
       <|> (TDef loc <$> parseDef)
 
-validateProgram :: forall r. Member (Error Err) r => [TopLevel] -> Sem r (Program Term)
-validateProgram ts = do
-  (defs, types, tests, main) <- aux Map.empty Map.empty [] Nothing ts
+validateProgram :: 
+  forall r. Member (Error Err) r => [TopLevel] -> Sem r (Program Term)
+validateProgram topLevels = do
+  (defs, types, tests, main) <- aux Map.empty Map.empty [] Nothing topLevels
   pure $
     Program
-      { pgmDefinitions = defs,
-        pgmDatatypes = types,
-        pgmTests = reverse tests,
-        pgmMain = main
+      { programDefinitions = defs,
+        programDatatypes = types,
+        programTests = reverse tests,
+        programMain = main
       }
   where
     aux defs types test main ts = case (main, ts) of
@@ -194,9 +192,9 @@ validateProgram ts = do
         Just _ -> throw (ScopeError l "Redefinition of a data type")
       (_, TTest t : ts') -> aux defs types (t : test) main ts'
 
-fromFile :: forall r. Members '[Embed IO, Error Err] r => FilePath -> Sem r (Program Term)
+fromFile :: Members '[Embed IO, Error Err] r => FilePath -> Sem r (Program Term)
 fromFile f = do
-  pgm <- readFile f
-  case runParser (many parseTopLevel <* eof) f pgm of
+  program <- readFile f
+  case runParser (many parseTopLevel <* eof) f program of
     Left err -> throw . ParseError . Text.pack . errorBundlePretty $ err
     Right t -> validateProgram t

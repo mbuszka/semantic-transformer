@@ -1,7 +1,6 @@
-module Anf (Anf(..), fromSource, toSource) where
+module Anf (Anf (..), fromSource, toSource) where
 
 import Syntax
-import Polysemy
 
 data Anf
   = Atom (TermF Anf)
@@ -26,7 +25,8 @@ toAnf term = case unTerm term of
     atomic t (\t' -> Expr . Case t' <$> traverse toAnf cs)
   Panic -> pure $ Expr Panic
 
-seqAnf :: Member FreshVar r => [Term] -> [Anf] -> ([Anf] -> Sem r Anf) -> Sem r Anf
+seqAnf ::
+  Member FreshVar r => [Term] -> [Anf] -> ([Anf] -> Sem r Anf) -> Sem r Anf
 seqAnf [] acc k = k (reverse acc)
 seqAnf (t : ts) acc k = atomic t (\t' -> seqAnf ts (t' : acc) k)
 

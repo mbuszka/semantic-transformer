@@ -1,5 +1,3 @@
-{-# LANGUAGE RecordWildCards #-}
-
 module Syntax
   ( Annot (..),
     Bound (..),
@@ -20,10 +18,12 @@ module Syntax
     Value (..),
     Var (..),
     extractNames,
+    forget,
     freshVar,
     mkVar,
     insertNames,
     runFreshVar,
+    scope,
   )
 where
 
@@ -31,21 +31,19 @@ import Control.Monad.State
 import Data.IORef
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import qualified Data.Text as Text
-import Polysemy
 import Pretty
 import Util
 
 data Program t
   = Program
-      { pgmDefinitions :: Map Var (Def t),
-        pgmDatatypes :: Map Tp [Record Tp],
-        pgmTests :: [TestCase],
-        pgmMain :: Def t
+      { programDefinitions :: Map Var (Def t),
+        programDatatypes :: Map Tp [Record Tp],
+        programTests :: [TestCase],
+        programMain :: Def t
       }
   deriving (Functor, Foldable, Traversable)
 
-data Def t = Def { defAnnotations :: Set Annot, defScope :: Scope t }
+data Def t = Def {defAnnotations :: Set Annot, defScope :: Scope t}
   deriving (Functor, Foldable, Traversable)
 
 data Annot
@@ -82,7 +80,7 @@ data Var = SrcVar Text | GenVar Int
 data Tag = SrcTag Text | GenTag Int | TopTag Var
   deriving (Eq, Ord, Show)
 
-data Tp 
+data Tp
   = TStruct Text
   | TInt
   | TStr
@@ -151,7 +149,7 @@ extractNames :: Pattern Var -> (Pattern (), [Var])
 extractNames p = (p $> (), toList p)
 
 insertNames :: Pattern a -> [Var] -> Pattern Var
-insertNames pattern variables = case go pattern variables of
+insertNames pattern vars = case go pattern vars of
   (p, []) -> p
   _ -> error "Mismatched variable count"
   where
@@ -162,6 +160,10 @@ insertNames pattern variables = case go pattern variables of
 
 mkVar :: Text -> Var
 mkVar = SrcVar
+
+-- Smart constructors
+scope :: [Var] -> t -> Scope t
+scope vs = Scope (fmap (,Nothing) vs)
 
 -- Pretty printing
 instance Pretty Var where
@@ -180,23 +182,23 @@ instance Pretty Annot where
   pretty NoCps = "@no-cps"
 
 instance Pretty t => Pretty (Program t) where
-  pretty (Program {..}) =
+  pretty Program {..} =
     types <> hardline <> main <> hardline <> defs <> hardline <> tests
     where
-      defs = rows . fmap def . Map.toList $ pgmDefinitions
+      defs = rows . fmap def . Map.toList $ programDefinitions
       def (name, Def _ (Scope vs t)) =
         hardline
           <> parens ("def" <+> pretty name <> body (variables vs) (pretty t))
-      types = rows . fmap typ . Map.toList $ pgmDatatypes
+      types = rows . fmap typ . Map.toList $ programDatatypes
       typ (name, records) =
         parens
           ( "def-data"
               <+> pretty name <> nested 2 (rows . fmap pretty $ records)
           )
           <> hardline
-      main = parens ("def main" <> body (variables mvs) (pretty mt))
-      Def _ (Scope mvs mt) = pgmMain
-      tests = rows . fmap pretty $ pgmTests
+      main = parens ("def main" <> body (variables mvs) (pretty mb))
+      Def _ (Scope mvs mb) = programMain
+      tests = rows . fmap pretty $ programTests
 
 instance Pretty Value where
   pretty (Number n) = pretty n
