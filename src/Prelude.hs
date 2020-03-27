@@ -21,6 +21,7 @@ module Prelude
     module GHC.Base,
     module GHC.IO,
     module GHC.Num,
+    module GHC.Real,
     module GHC.Show,
     module Polysemy,
     error,
@@ -41,7 +42,7 @@ import Control.Applicative
 import Control.Monad ((<=<), (=<<), (>=>), mfilter, when)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Either (Either (..))
-import Data.Foldable (Foldable (..), toList, traverse_, for_)
+import Data.Foldable (Foldable (..), for_, toList, traverse_)
 import Data.Function ((&), (.), const)
 import Data.Functor (($>), (<$>), (<&>), Functor (..), void)
 import Data.List (reverse, take, zip)
@@ -58,7 +59,7 @@ import Data.Text.Prettyprint.Doc (Doc, Pretty (..))
 import qualified Data.Text.Prettyprint.Doc as PP
 import Data.Text.Prettyprint.Doc.Render.Text (renderStrict)
 import Data.Traversable (Traversable (..), for)
-import Data.Tuple (fst, snd)
+import Data.Tuple (fst, snd, swap)
 import Data.Void (Void)
 import GHC.Base
   ( ($),
@@ -80,6 +81,7 @@ import GHC.Base
 import qualified GHC.Base as Base
 import GHC.IO (FilePath)
 import GHC.Num ((*), (+), (-), Num)
+import GHC.Real (Integral(..))
 import GHC.Show (Show (show))
 import GHC.Stack (HasCallStack)
 import Polysemy

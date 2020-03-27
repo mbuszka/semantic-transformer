@@ -11,8 +11,8 @@ import Polysemy.Error
 import Polysemy.Output
 import Polysemy.Reader
 import Polysemy.State
-import Pretty
 import Util
+import qualified Syntax as Stx
 
 type Effs r =
   Members
@@ -31,9 +31,9 @@ fromSource ::
 fromSource program = do
   (Abstract {..}, analysis) <- analyse program
   let Program {..} = abstractProgram
-  pprint' . pmap
-    . fmap (defScope . fmap (toDbg abstractTerms))
-    $ programDefinitions
+  -- pprint' . pmap
+  --   . fmap (defScope . fmap (toDbg abstractTerms))
+  --   $ programDefinitions
   (lambdas, (applys, (pgm, main))) <-
     runOutputList
       . runState Map.empty
@@ -47,13 +47,13 @@ fromSource program = do
   let lambdas' = Map.fromList lambdas
   let genBody vs t@(TopTag v) =
         pure
-          ( PCons (Record t []),
+          ( PCons (Stx.Record t []),
             Scope [] (Term . App (Term . Var $ v) $ fmap (Term . Var) vs)
           )
       genBody vs tag = do
         let (fvs, (Scope xs b)) = lambdas' Map.! tag
         let b' = foldl' sub b (fmap fst xs `zip` vs)
-        pure (PCons (Record tag (fmap (const (PVar ())) fvs)), scope fvs b')
+        pure (PCons (Stx.Record tag (fmap (const (PVar ())) fvs)), scope fvs b')
   let genApply (tags, (var, f : vs)) = do
         ps <- traverse (genBody vs) . toList $ tags
         let b = Term $ Case (Term . Var $ f) (Patterns ps)
@@ -75,13 +75,13 @@ runDefun label@(Label x) = do
       let fvs = toList $ freeVars term' Set.\\ topVars
           tag = GenTag x
       output (tag, (fvs, s))
-      pure . Term . Cons . Record tag . fmap (Term . Var) $ fvs
+      pure . Term . Cons . Stx.Record tag . fmap (Term . Var) $ fvs
     Var {} -> do
       functions <- getFuns label
       case functions of
-        [TopTag v] -> pure . Term . Cons $ Record (TopTag v) []
+        [TopTag v] -> pure . Term . Cons $ Stx.Record (TopTag v) []
         _ -> pure . Term $ term'
-    App (Term (Cons (Record (TopTag v) []))) xs ->
+    App (Term (Cons (Stx.Record (TopTag v) []))) xs ->
       pure . Term $ App (Term . Var $ v) xs
     App f xs -> do
       let App f' _ = term

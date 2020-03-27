@@ -1,7 +1,7 @@
 module Defun.Labeled
   ( module Syntax,
     Abstract (..),
-    CacheDst (..),
+    Act (..),
     Cont (..),
     ContPtr (..),
     Dbg (..),
@@ -22,7 +22,7 @@ import qualified Data.Set as Set
 import Polysemy.Error
 import Polysemy.State
 import Pretty
-import Syntax hiding (Value (..))
+import Syntax hiding (Value (..), ValueF (..))
 import Util
 
 data Abstract
@@ -37,23 +37,23 @@ data Abstract
 data Value
   = Closure Label Env [Var] Label
   | TopLevel Var
-  | Struct (Record ValuePtr)
-  | String
+  | Record Tag [ValuePtr]
   | Number
+  | String
+  | Boolean
+  deriving (Eq, Ord)
+
+data Act = AFun | APrim PrimOp Label | ARecord Tag Label
   deriving (Eq, Ord)
 
 data Cont
-  = EvalApp Env [ValuePtr] [Label] CacheDst ContPtr
-  | EvalCons Label Tag Env [ValuePtr] [Label] CacheDst ContPtr
-  | EvalCase Env (Patterns Label) CacheDst ContPtr
+  = CLet Var Env Label ContPtr
   | Halt
   deriving (Eq, Ord)
 
 newtype ValuePtr = ValuePtr Label deriving (Eq, Ord, Pretty)
 
 newtype ContPtr = ContPtr Label deriving (Eq, Ord, Pretty)
-
-newtype CacheDst = CacheDst Label deriving (Eq, Ord, Pretty)
 
 newtype Store v = Store {unStore :: Map Label (Set v)}
   deriving (Eq, Ord)
@@ -91,29 +91,39 @@ label (Term t) = do
 fromSource :: Members '[Error Err] r => Program Term -> Sem r Abstract
 fromSource = evalState (Label 0) . fromSource'
 
+type TEnv = Map Tp Label
+
+absType :: TEnv -> Tp -> Value
+absType env tp = case tp of
+  TInt -> Number
+  TStr -> String
+  TBool -> Boolean
+  TRecord c ts -> Record c . fmap (ValuePtr . (env Map.!)) $ ts
+  TData _ -> error "Cannot include another data type"
+
 fromSource' ::
   Members '[Error Err, State Label] r => Program Term -> Sem r Abstract
 fromSource' pgm = do
   (abstractTerms, abstractProgram) <- runState Map.empty . traverse label $ pgm
   let Program {..} = abstractProgram
   pgmDtps <- traverse (const nextLabel) programDatatypes
-  (abstractDataStore, dtps) <- runState (Store Map.empty) do
-    baseDtps <- for [(TStr, String), (TInt, Number)] \case
+  (abstractDataStore, env) <- runState (Store Map.empty) do
+    baseValues <- for [(TStr, String), (TInt, Number), (TBool, Boolean)] \case
       (name, value) -> do
         lbl <- nextLabel
         insert lbl value
         pure (name, lbl)
-    let dtps = Map.union (Map.fromList baseDtps) pgmDtps
+    let env = Map.union (Map.fromList baseValues) pgmDtps
     for_ (Map.toList programDatatypes) \case
-      (name, records) -> do
-        let rs' = fmap (Struct . fmap (ValuePtr . (dtps Map.!))) records
-            lbl = dtps Map.! name
-        traverse_ (insert lbl) rs'
-    pure dtps
+      (name, types) -> do
+        let vals = fmap (absType env) types
+            lbl = env Map.! name
+        traverse_ (insert lbl) vals
+    pure env
   let Def _ (Scope xs main) = programMain
   let abstractContStore = Store (Map.singleton main (Set.singleton Halt))
   let aux (_, Nothing) = throw (ModuleError "Missing type annotation in main")
-      aux (x, Just t) = pure (x, ValuePtr (dtps Map.! t))
+      aux (x, Just t) = pure (x, ValuePtr (env Map.! t))
   abstractInitEnv <- fmap Map.fromList (traverse aux xs)
   pure $ Abstract {..}
 
@@ -123,15 +133,17 @@ toDbg terms lbl = Dbg lbl (fmap (toDbg terms) (terms Map.! lbl))
 instance Pretty Value where
   pretty (Closure lbl _ _ _) = "closure" <+> pretty lbl
   pretty (TopLevel x) = pretty x
-  pretty (Struct r) = pretty r
+  pretty (Record c ts) = braces (pretty c <> (nested' 2 ts))
   pretty String = "string"
   pretty Number = "number"
+  pretty Boolean = "boolean"
 
 instance Pretty Cont where
-  pretty (EvalApp _ _ _ _ k) = parens ("EvalApp" <> pretty k)
+  pretty (CLet v _ l k) = parens ("let" <+> pretty v <+> pretty l <+> pretty k)
   pretty Halt = "Halt"
-  pretty (EvalCons _ _ _ _ _ _ k) = parens ("EvalCons" <+> pretty k)
-  pretty (EvalCase _ _ _ k) = parens ("EvalCase" <+> pretty k)
-
+  
 instance Pretty Dbg where
   pretty (Dbg lbl t) = pretty lbl <> "#" <> pretty t
+
+instance Pretty v => Pretty (Store v) where
+  pretty (Store vs) = pmap . fmap toList $ vs

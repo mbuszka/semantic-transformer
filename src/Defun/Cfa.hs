@@ -15,6 +15,7 @@ import Polysemy.Reader
 import Polysemy.State
 import Pretty hiding (body)
 import Util
+import qualified Syntax as Stx
 
 data Config
   = Eval Env Label ContPtr
@@ -48,84 +49,87 @@ derefV (ValuePtr p) = do
   Store xs <- get
   oneOf (xs Map.! p)
 
-copy :: Effs r => ValuePtr -> CacheDst -> Sem r ()
-copy (ValuePtr src) (CacheDst dst) = do
-  Store vals <- get @(Store Value)
-  let vals' = Map.insertWith (<>) dst (vals Map.! src) vals
-  put (Store vals')
-
 insertK :: Member (State (Store Cont)) r => Label -> Cont -> Sem r ContPtr
 insertK lbl k = insert lbl k >> pure (ContPtr lbl)
 
 insertV :: Member (State (Store Value)) r => Label -> Value -> Sem r ValuePtr
 insertV lbl v = insert lbl v >> pure (ValuePtr lbl)
 
+copy :: Member (State (Store Value)) r => ValuePtr -> Label -> Sem r ValuePtr
+copy (ValuePtr src) dst = do
+  (Store values) <- get @(Store Value)
+  put . Store . Map.insertWith (<>) dst (values Map.! src) $ values
+  pure $ ValuePtr dst
+
+lookup :: Effs r => Env -> Var -> Label -> Sem r ValuePtr
+lookup env var dst = case env Map.!? var of
+  Just v -> copy v dst
+  Nothing -> asks (Map.member var) >>= \case
+    True -> insertV dst (TopLevel var)
+    False -> error $ "Unknown variable: " <> pshow var <> " at " <> pshow dst
+
+aval :: Effs r => Env -> Label -> Sem r ValuePtr
+aval env lbl = term lbl >>= \case
+  Var v -> lookup env v lbl
+  Abs (Scope xs t) -> insertV lbl $ Closure lbl env (fmap fst xs) t
+  Cons (Stx.Boolean _) -> insertV lbl Boolean
+  Cons (Stx.Number _) -> insertV lbl Number
+  Cons (Stx.String _) -> insertV lbl String
+  Cons (Stx.Record c vs) -> insertV lbl . Record c =<< traverse (aval env) vs
+  Prim op vs -> insertV lbl =<< prim op =<< traverse (derefV <=< aval env) vs
+  _ -> error "term not in A-normal form"
+
 eval :: Effs r => Env -> Label -> ContPtr -> Sem r Config
 eval env lbl k = term lbl >>= \case
-  App f es -> do
-    k' <- insertK f (EvalApp env [] es (CacheDst f) k)
-    pure $ Eval env f k'
-  Abs (Scope xs body) -> do
-    ptr <- insertV lbl (Closure lbl env (fmap fst xs) body)
-    pure $ Continue ptr k
-  Var x -> do
-    ptr <- case env Map.!? x of
-      Just v -> do
-        copy v (CacheDst lbl)
-        pure $ ValuePtr lbl
-      Nothing -> asks (Map.member x) >>= \b ->
-        if b
-          then insertV lbl (TopLevel x)
-          else error $ "Unknown variable: " <> pshow x <> " at " <> pshow lbl
-    pure $ Continue ptr k
-  Cons (Record c []) -> do
-    ptr <- insertV lbl (Struct (Record c []))
-    pure $ Continue ptr k
-  Cons (Record c (e : es)) -> do
-    k' <- insertK e (EvalCons lbl c env [] es (CacheDst e) k)
-    pure $ Eval env e k'
-  Case e ps -> do
-    k' <- insertK e (EvalCase env ps (CacheDst e) k)
-    pure $ Eval env e k'
+  App f ts -> do
+    f' <- aval env f
+    ts' <- traverse (aval env) ts
+    apply f' ts' k
+  Let t (Scope [(x, _)] body) -> do
+    k' <- insertK lbl (CLet x env body k)
+    pure $ Eval env t k'
+  Let _ _ -> error "Bad syntax"
+  Case t ps -> do
+    v <- aval env t
+    applyCases env v ps k
   Panic -> empty
-  Let {} -> error "Not implemented yet"
+  _ -> do
+    v <- aval env lbl
+    pure $ Continue v k
+
+prim :: Effs r => PrimOp -> [Value] -> Sem r Value
+prim op vs = case (op, vs) of
+  (Add, [Number, Number]) -> pure Number
+  (Sub, [Number, Number]) -> pure Number
+  (Mul, [Number, Number]) -> pure Number
+  (Div, [Number, Number]) -> pure Number
+  (Neg, [Number]) -> pure Number
+  (And, [Boolean, Boolean]) -> pure Boolean
+  (Or, [Boolean, Boolean]) -> pure Boolean
+  (Not, [Boolean]) -> pure Boolean
+  (Eq, [_, _]) -> pure Boolean
+  _ -> empty
 
 continue :: Effs r => ValuePtr -> ContPtr -> Sem r Config
-continue vPtr kPtr = do
-  derefK kPtr >>= \case
-    EvalApp env vs es dst k -> do
-      when (null vs) (copy vPtr dst)
-      case es of
-        e : es' -> do
-          k' <- insertK e $ EvalApp env (vPtr : vs) es' (CacheDst e) k
-          pure $ Eval env e k'
-        [] -> do
-          let f : as = reverse (vPtr : vs)
-          apply f as k
-    Halt -> empty
-    EvalCons lbl c env vs es _dst k -> do
-      -- copy vPtr dst
-      case es of
-        e : es' -> do
-          k' <- insertK e $ EvalCons lbl c env (vPtr : vs) es' (CacheDst e) k
-          pure $ Eval env e k'
-        [] -> do
-          cPtr <- insertV lbl $ Struct (Record c (reverse $ vPtr : vs))
-          pure $ Continue cPtr k
-    EvalCase env ps _dst k -> do
-      -- copy vPtr dst
-      applyCases env vPtr ps k
+continue val k = derefK k >>= \case
+  CLet var env body k' -> pure $ Eval (Map.insert var val env) body k'
+  Halt -> empty
 
 applyCases :: Effs r => Env -> ValuePtr -> Patterns Label -> ContPtr -> Sem r Config
 applyCases environment vPtr (Patterns patterns) k =
   let aux env (PVar x : ps) (v : vs) = aux (Map.insert x v env) ps vs
       aux env (PWild : ps) (_ : vs) = aux env ps vs
-      aux env (PCons (Record c ps') : ps) (v : vs) = derefV v >>= \case
-        Struct (Record c' vs') -> do
-          guard (c' == c)
-          guard (length ps' == length vs')
-          aux env (ps' <> ps) (vs' <> vs)
-        _ -> empty
+      aux env (PCons c : ps) (v : vs) = do
+        v' <- derefV v
+        case (c, v') of
+          (Stx.Record t ps', Record t' vs') -> do
+            guard (t' == t)
+            guard (length ps' == length vs')
+            aux env (ps' <> ps) (vs' <> vs)
+          (Stx.Number _, Number) -> aux env ps vs
+          (Stx.String _, String) -> aux env ps vs
+          (Stx.Boolean _, Boolean) -> aux env ps vs
+          _ -> empty
       aux env [] [] = pure env
       aux _ _ _ = empty
    in do
@@ -152,7 +156,7 @@ step (vStore, kStore, confs) = do
       oneOf confs >>= \case
         Eval env e k -> eval env e k
         Continue v k -> continue v k
-  pure (vStore', kStore', Set.fromList cs)
+  pure (vStore', kStore', confs  `Set.union` Set.fromList cs)
 
 format :: Map Label (Set Value) -> Map Label [Tag]
 format = Map.fromList . fmap aux . Map.toList
@@ -169,6 +173,13 @@ analyse program = do
   let Program {..} = abstractProgram
   let go s n = do
         s' <- step s
+        -- let (Store vs, Store ks, cs) = s
+        -- let (Store vs', Store ks', cs') = s'
+        -- when (n `mod` 1000 == 0) do
+        --   pprint' $ "Step: " <> pretty n
+        --   pprint $ Store (Map.difference vs' vs)
+        --   pprint $ Store (Map.difference ks' ks)
+        --   pprint $ toList (Set.difference cs' cs)
         if s == s'
           then pure s
           else go s' (n + 1)
@@ -178,5 +189,9 @@ analyse program = do
     runReader (fmap defScope (programDefinitions))
       . runReader abstractTerms
       $ go (abstractDataStore, abstractContStore, conf) (0 :: Int)
-  pprint' $ pmap (fmap toList vStore)
+  -- pprint' $ pmap (fmap toList vStore)
   pure (abstract, format vStore)
+
+instance Pretty Config where
+  pretty (Eval _ t k) = parens ("eval" <+> pretty t <+> pretty k)
+  pretty (Continue v k) = parens ("continue" <+> pretty v <+> pretty k)

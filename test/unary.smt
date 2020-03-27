@@ -4,12 +4,16 @@
 
 (def succ (n) {succ n})
 
-(def add (n m)
+(def plus (n m)
   (case n
     ({zero} m)
-    ({succ n} {succ (add n m)})))
+    ({succ n} {succ (plus n m)})))
 
 (def main ()
-  (add
+  (plus
     (succ (succ (succ (zero))))
     (succ (succ (succ (succ (zero)))))))
+
+(def-test "should work"
+  ()
+  {succ {succ {succ {succ {succ {succ {succ {zero}}}}}}}})

@@ -25,28 +25,27 @@ runTest f = do
 
 runTests :: MonadIO m => Program Term -> m ()
 runTests pgm = do
-  putTextLn ""
+  putTextLn "Running tests:"
   for_ (Eval.tests pgm) \case 
     (name, res) -> do
       pprint' $
-        "Running test:" <+> pretty name <+> "..." <> nested 2 (pretty res) <> hardline
+        pretty name <+> "..." <> nested 2 (pretty res)
 
 
 test :: Members '[Embed IO, FreshVar, Error Err] r => FilePath -> Sem r ()
 test file = do
   pgm <- Parser.fromFile file
   pgm `seq` putTextLn "Parsed source"
-  pprint pgm
-  runTests pgm
   anf <- Anf.fromSource pgm
   anf `seq` putTextLn "Transformed to Anf"
-  pprint anf
+  -- pprint anf
   runTests (fmap Anf.toSource anf)
   cps <- Cps.fromAnf anf
-  cps `seq` putTextLn "Transformed to Cps"
-  pprint cps
+  cps `seq` putTextLn "\nTransformed to Cps"
+  -- pprint cps
   runTests cps
   def <- Defun.fromSource cps
-  def `seq` putTextLn "Defunctionalized"
+  def `seq` putTextLn "\nDefunctionalized"
   pprint def
+  putTextLn ""
   runTests def

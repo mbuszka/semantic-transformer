@@ -1,3 +1,5 @@
+{-# LANGUAGE PatternSynonyms #-}
+
 module Eval
   ( tests,
   )
@@ -7,34 +9,40 @@ import qualified Data.Map as Map
 import Polysemy.Error
 import Polysemy.Reader
 import Pretty
-import Syntax hiding (Value (..))
+import Syntax hiding (Value (..), ValueF (..))
 import qualified Syntax as Stx
 import Util
 
 data Value
-  = Struct (Record Value)
-  | Closure Env (Scope Term)
+  = Closure Env (Scope Term)
   | TopLevel Var
+  | Value (Stx.ValueF Value)
+
+pattern Number :: Int -> Value
+pattern Number n = Value (Stx.Number n)
+
+pattern String :: Text -> Value
+pattern String s = Value (Stx.String s)
+
+pattern Boolean :: Bool -> Value
+pattern Boolean b = Value (Stx.Boolean b)
+
+pattern Struct :: Tag -> [Value] -> Value
+pattern Struct c s = Value (Stx.Record c s)
 
 instance Eq Value where
-  Struct a == Struct b = a == b
+  Value l == Value r = l == r
   TopLevel v == TopLevel w = v == w
   _ == _ = False
 
-data Cont
-  = EvalFun Env [Term]
-  | EvalArgs Env Value [Value] [Term]
-  | EvalLet Env Var Term
-  | EvalCase Env (Patterns Term)
-  | EvalCons Env Tag [Value] [Term]
+data Cont = CLet Var Env Term
 
 type Env = Map Var Value
 
 type Effs r = Members '[Error Err, Reader (Map Var (Scope Term))] r
 
 inject :: Stx.Value -> Value
-inject (Stx.Struct r) = Struct (fmap inject r)
-inject _ = error "Not implemented yet"
+inject = Value . fmap inject . Stx.unValue
 
 zip' :: [a] -> [b] -> Maybe [(a, b)]
 zip' [] [] = Just []
@@ -82,41 +90,46 @@ topLevel x = do
     Nothing -> throw . EvalError $ "Unknown top-level function: " <> pshow x
     Just s -> pure s
 
+aval :: Effs r => Env -> Term -> Sem r Value
+aval env term = case unTerm term of
+  Var x -> lookup env x
+  Abs s -> pure $ Closure (env `Map.restrictKeys` freeVars term) s
+  Cons v -> Value <$> traverse (aval env) v
+  Prim op vs -> prim op =<< traverse (aval env) vs
+  _ -> throw (EvalError "Term not in A-normal form")
+
 eval :: Effs r => Env -> Term -> [Cont] -> Sem r Value
 eval env term cont = case unTerm term of
-  Var x -> do
-    v <- Eval.lookup env x
-    continue v cont
-  Abs s -> do
-    let clo = Closure (env `Map.restrictKeys` freeVars term) s
-    continue clo cont
-  App f xs -> eval env f (EvalFun env xs : cont)
-  Let t (Scope [(x, _)] b) -> eval env t (EvalLet env x b : cont)
-  Case t ps -> eval env t (EvalCase env ps : cont)
-  Cons (Record c []) -> continue (Struct (Record c [])) cont
-  Cons (Record c (t : ts)) -> eval env t (EvalCons env c [] ts : cont)
-  Let _ _ -> error "Not implemented yet"
-  Panic -> error "Not implemented yet"
+  App f xs -> do
+    f' <- aval env f
+    xs' <- traverse (aval env) xs
+    apply f' xs' cont
+  Let t (Scope [(x, _)] b) -> eval env t (CLet x env b : cont)
+  Let _ _ -> throw (EvalError "Let only binds a single variable")
+  Case t (Patterns ps) -> do
+    v <- aval env t
+    evalCase env v ps cont
+  Panic -> throw (EvalError "PANIC")
+  _ -> aval env term >>= flip continue cont
 
 continue :: Effs r => Value -> [Cont] -> Sem r Value
 continue v cont = case cont of
-  EvalFun _ [] : ks ->
-    apply v [] ks
-  EvalFun env (t : ts) : ks ->
-    eval env t $ EvalArgs env v [] ts : ks
-  EvalArgs _ f vs [] : ks ->
-    apply f (reverse (v : vs)) ks
-  EvalArgs env f vs (t : ts) : ks ->
-    eval env t $ EvalArgs env f (v : vs) ts : ks
-  EvalLet env x t : ks ->
-    eval (Map.insert x v env) t ks
-  EvalCase env (Patterns ps) : ks ->
-    evalCase env v ps ks
-  EvalCons _env c vs [] : ks ->
-    continue (Struct (Record c (reverse (v : vs)))) ks
-  EvalCons env c vs (t : ts) : ks ->
-    eval env t $ EvalCons env c (v : vs) ts : ks
+  CLet x env t : ks -> eval (Map.insert x v env) t ks
   [] -> pure v
+
+prim :: Effs r => PrimOp -> [Value] -> Sem r Value
+prim op vs = case (op, vs) of
+  (Add, [Number l, Number r]) -> pure $ Number (l + r)
+  (Add, [String l, String r]) -> pure $ String (l <> r)
+  (Sub, [Number l, Number r]) -> pure $ Number (l - r)
+  (Mul, [Number l, Number r]) -> pure $ Number (l * r)
+  (Div, [Number l, Number r]) -> pure $ Number (l `div` r)
+  (And, [Boolean l, Boolean r]) -> pure $ Boolean (l && r)
+  (Or, [Boolean l, Boolean r]) -> pure $ Boolean (l || r)
+  (Eq, [l, r]) -> pure $ Boolean (l == r)
+  (Neg, [Number n]) -> pure $ Number (- n)
+  (Not, [Boolean b]) -> pure $ Boolean (not b)
+  x -> throw (EvalError $ "Bad prim-op: " <> pshow x)
 
 evalCase ::
   Effs r =>
@@ -133,8 +146,17 @@ evalCase environment value patterns ks = case patterns of
   where
     aux (PVar () : ps) (x : xs) (v : vs) env = aux ps xs vs (Map.insert x v env)
     aux (PWild : ps) xs (_ : vs) env = aux ps xs vs env
-    aux (PCons (Record c ps') : ps) xs (Struct (Record c' vs') : vs) env
+    aux (PCons (Stx.Record c ps') : ps) xs (Struct c' vs' : vs) env
       | c == c' = aux (ps' <> ps) xs (vs' <> vs) env
+      | otherwise = Nothing
+    aux (PCons (Stx.Boolean b) : ps) xs (Boolean b' : vs) env
+      | b == b' = aux ps xs vs env
+      | otherwise = Nothing
+    aux (PCons (Stx.Number b) : ps) xs (Number b' : vs) env
+      | b == b' = aux ps xs vs env
+      | otherwise = Nothing
+    aux (PCons (Stx.String b) : ps) xs (String b' : vs) env
+      | b == b' = aux ps xs vs env
       | otherwise = Nothing
     aux [] [] [] env = Just env
     aux [] [] _ _ = Nothing
@@ -155,7 +177,7 @@ apply f vs ks = do
   eval (Map.fromList new `Map.union` env) t ks
 
 instance Pretty Value where
-  pretty (Struct r) = pretty r
+  pretty (Value v) = pretty v
   pretty (Closure _ _) = "<closure>"
   pretty (TopLevel x) = "<function:" <+> pretty x <> ">"
 

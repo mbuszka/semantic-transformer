@@ -9,8 +9,8 @@ term = pure . Term
 toCps :: Member FreshVar r => Anf -> TermF Term -> Sem r Term
 toCps (Atom t) k = (\v -> Term $ App (Term k) [v]) <$> atomic t
 toCps (Expr tm) k = case tm of
-  App (Atom f) ts -> do
-    f' <- atomic f
+  App f ts -> do
+    f' <- atomic' f
     ts' <- traverse atomic' ts
     term $ App f' (ts' <> [Term k])
   Let t (Scope [x] b) -> do
@@ -35,6 +35,7 @@ atomic (Abs (Scope xs t)) = do
   t' <- toCps t (Var k')
   pure . Term . Abs $ Scope (xs <> [(k', Nothing)]) t'
 atomic (Cons r) = Term . Cons <$> traverse atomic' r
+atomic (Prim op ts) = Term . Prim op <$> traverse atomic' ts
 atomic _ = error "Unexpected term after Anf"
 
 atomic' :: Member FreshVar r => Anf -> Sem r Term

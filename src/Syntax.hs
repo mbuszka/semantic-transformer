@@ -6,9 +6,9 @@ module Syntax
     Located (..),
     Pattern (..),
     Patterns (..),
+    PrimOp (..),
     Pretty (..),
     Program (..),
-    Record (..),
     Scope (..),
     Tag (..),
     Term (..),
@@ -16,18 +16,20 @@ module Syntax
     TestCase (..),
     Tp (..),
     Value (..),
+    ValueF (..),
     Var (..),
     extractNames,
     forget,
     freshVar,
     mkVar,
     insertNames,
+    primOps,
     runFreshVar,
     scope,
   )
 where
 
-import Control.Monad.State
+import Control.Monad.State.Strict
 import Data.IORef
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -37,7 +39,7 @@ import Util
 data Program t
   = Program
       { programDefinitions :: Map Var (Def t),
-        programDatatypes :: Map Tp [Record Tp],
+        programDatatypes :: Map Tp [Tp],
         programTests :: [TestCase],
         programMain :: Def t
       }
@@ -52,23 +54,24 @@ data Annot
 
 data TestCase = TestCase Text [Value] Value
 
-data Record t = Record Tag [t]
-  deriving (Eq, Ord, Functor, Foldable, Traversable, Show)
+data PrimOp = Add | Sub | Mul | Div | Neg | And | Or | Not | Eq
+  deriving (Eq, Ord)
 
 data TermF t
   = Var Var
   | Abs (Scope t)
   | App t [t]
+  | Prim PrimOp [t]
   | Let t (Scope t)
   | Case t (Patterns t)
-  | Cons (Record t)
+  | Cons (ValueF t)
   | Panic
   deriving (Functor, Foldable, Traversable)
 
 data Pattern v
   = PVar v
   | PWild
-  | PCons (Record (Pattern v))
+  | PCons (ValueF (Pattern v))
   deriving (Functor, Foldable, Eq, Ord)
 
 newtype Patterns t = Patterns [(Pattern (), Scope t)]
@@ -81,18 +84,25 @@ data Tag = SrcTag Text | GenTag Int | TopTag Var
   deriving (Eq, Ord, Show)
 
 data Tp
-  = TStruct Text
+  = TData Text
   | TInt
   | TStr
+  | TBool
+  | TRecord Tag [Tp]
   deriving (Eq, Ord)
 
 data Scope t = Scope [(Var, Maybe Tp)] t
   deriving (Eq, Ord, Functor, Foldable, Traversable)
 
-data Value
+data ValueF t
   = Number Int
   | String Text
-  | Struct (Record Value)
+  | Boolean Bool
+  | Record Tag [t]
+  deriving (Eq, Ord, Functor, Foldable, Traversable)
+
+newtype Value = Value {unValue :: ValueF Value}
+  deriving (Eq, Ord, Bound, Pretty)
 
 -- Various syntax representations
 newtype Term = Term {unTerm :: TermF Term}
@@ -119,11 +129,6 @@ instance Bound t => Bound (Scope t) where
           then Scope vs (rename vars' t)
           else error "Free variable would become bound by renaming"
 
-instance Bound t => Bound (Record t) where
-  freeVars (Record _ ts) = foldMap freeVars ts
-
-  rename vars = fmap (rename vars)
-
 instance Bound t => Bound (TermF t) where
   freeVars term = case term of
     Var v -> Set.singleton v
@@ -138,6 +143,13 @@ instance Bound t => Bound (TermF t) where
     Let t s -> Let (rename vars t) (rename vars s)
     Case t ps -> Case (rename vars t) (rename vars ps)
     _ -> fmap (rename vars) term
+
+instance Bound v => Bound (ValueF v) where
+  freeVars (Record _ ts) = foldMap freeVars ts
+  freeVars _ = Set.empty
+
+  rename vars (Record c ts) = Record c (fmap (rename vars) ts)
+  rename _ v = v
 
 instance Bound t => Bound (Patterns t) where
   freeVars (Patterns ps) = foldMap (freeVars . snd) ps
@@ -164,6 +176,20 @@ mkVar = SrcVar
 -- Smart constructors
 scope :: [Var] -> t -> Scope t
 scope vs = Scope (fmap (,Nothing) vs)
+
+primOps :: Map Text PrimOp
+primOps =
+  Map.fromList
+    [ ("add", Add),
+      ("sub", Sub),
+      ("mul", Mul),
+      ("div", Div),
+      ("neg", Neg),
+      ("and", And),
+      ("not", Not),
+      ("or", Or),
+      ("eq", Eq)
+    ]
 
 -- Pretty printing
 instance Pretty Var where
@@ -200,10 +226,12 @@ instance Pretty t => Pretty (Program t) where
       Def _ (Scope mvs mb) = programMain
       tests = rows . fmap pretty $ programTests
 
-instance Pretty Value where
+instance Pretty v => Pretty (ValueF v) where
   pretty (Number n) = pretty n
   pretty (String s) = escape s
-  pretty (Struct r) = pretty r
+  pretty (Record c ts) = braces (pretty c <> (nested' 2 ts))
+  pretty (Boolean True) = "#t"
+  pretty (Boolean False) = "#f"
 
 instance Pretty TestCase where
   pretty (TestCase desc inputs output) =
@@ -219,9 +247,6 @@ instance Pretty t => Pretty (Patterns t) where
       pat (p, Scope vs t) =
         parens (pretty (insertNames p . fmap fst $ vs) <> nested 1 (pretty t))
 
-instance Pretty t => Pretty (Record t) where
-  pretty (Record c ts) = braces (pretty c <> (nested' 2 ts))
-
 instance Pretty t => Pretty (Scope t) where
   pretty (Scope xs t) = variables xs <+> pretty t
 
@@ -231,32 +256,41 @@ instance Pretty Tag where
   pretty (TopTag v) = pretty v
 
 instance Pretty Tp where
-  pretty (TStruct t) = pretty t
+  pretty (TRecord c ts) = braces (pretty c <> (nested' 2 ts))
   pretty TInt = "integer"
   pretty TStr = "string"
+  pretty TBool = "boolean"
+  pretty (TData t) = pretty t
+
+instance Pretty PrimOp where
+  pretty op =
+    let ops = Map.fromList . fmap swap . Map.toList $ primOps
+     in pretty $ ops Map.! op
 
 prettyTerm :: Pretty t => TermF t -> Doc ann
 prettyTerm term = case term of
-  Var v ->
-    pretty v
+  Var v -> pretty v
+  Cons v -> pretty v
   Abs (Scope vs t) ->
     parens ("fun" <> body (variables vs) (pretty t))
   App f ts ->
     parens (pretty f <> nested' 2 ts)
+  Prim op ts ->
+    parens ("#" <+> pretty op <> nested' 2 ts)
   Let t (Scope [v] b) ->
     parens ("let" <+> pretty v <> body (pretty t) (pretty b))
-  Cons r ->
-    pretty r
+  Let _ _ ->
+    error "Let should bind only a single variable"
   Case t ps ->
     parens ("case" <> body (pretty t) (pretty ps))
   Panic -> "panic"
-  _ -> error "Unexpected syntax"
+
+variable :: (Var, Maybe Tp) -> Doc ann
+variable (v, Nothing) = pretty v 
+variable (v, Just tp) = brackets . aligned' $ [pretty v, pretty tp]
 
 variables :: [(Var, Maybe Tp)] -> Doc ann
-variables = parens . aligned' . fmap aux
-  where
-    aux (v, Nothing) = pretty v
-    aux (v, Just tp) = brackets . aligned' $ [pretty v, pretty tp]
+variables = parens . aligned' . fmap variable
 
 -- Fresh variable generation
 data FreshVar m a where
