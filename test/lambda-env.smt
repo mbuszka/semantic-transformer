@@ -17,7 +17,7 @@
       (case (streq x k)
         ({true} v)
         ({false} (lookup env x))))
-    ({empty} error)))
+    ({empty} panic)))
 
 (def eval (env term)
   (case term
@@ -27,4 +27,4 @@
     ({app f x} ((eval env f) (eval env x)))
     ({unit} {unit})))
 
-(def main (term) (eval {empty} term))
+(def main ([term expr]) (eval {empty} term))

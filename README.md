@@ -4,11 +4,10 @@ The project is built with `cabal`
 `cabal build` -- to build
 
 # Running examples
-`cabal run semt-exe -- /path/to/definitions` to perform control flow analysis and display intermediate representations
+`cabal run semt -- /path/to/definitions`
+
+This command will perform all transformations, run tests on intermediate
+results and display final program.
 
 # Example programs
-`test/lambda.smt` -- minimal evaluator for λ-calculus
-
-`test/lambda-env.smt` -- evaluator with environments
-
-`test/unary.smt` -- addition of unary encoded numbers, currently hangs the analysis
+`test/lambda.smt` -- evaluator for λ-calculus with some tests

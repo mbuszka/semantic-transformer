@@ -39,7 +39,7 @@ data Cont = CLet Var Env Term
 
 type Env = Map Var Value
 
-type Effs r = Members '[Error Err, Reader (Map Var (Scope Term))] r
+type Effs r = Members '[Embed IO, Error Err, Reader (Map Var (Scope Term))] r
 
 inject :: Stx.Value -> Value
 inject = Value . fmap inject . Stx.unValue
@@ -55,24 +55,23 @@ data TestResult
   | Success
   | Failure Stx.Value Value
 
-tests :: Program Term -> [(Text, TestResult)]
+tests :: Member (Embed IO) r => Program Term -> Sem r [(Text, TestResult)]
 tests Program {..} =
   let defs = fmap (\case Def _ s -> s) programDefinitions
       Def _ (Scope xs main) = programMain
       evalTest (TestCase name inputs output) =
-        ( name,
-          case fmap fst xs `zip'` fmap inject inputs of
-            Nothing -> MalformedTestCase (length xs) (length inputs)
-            Just init ->
-              let c = eval (Map.fromList init) main []
-               in case run . runError . runReader defs $ c of
-                    Left err -> RuntimeError err
-                    Right v ->
-                      if v == inject output
-                        then Success
-                        else Failure output v
-        )
-   in fmap evalTest programTests
+        (name,)
+          <$> case fmap fst xs `zip'` fmap inject inputs of
+            Nothing -> pure $ MalformedTestCase (length xs) (length inputs)
+            Just init -> do
+              c <- runError . runReader defs $ eval (Map.fromList init) main []
+              case c of
+                Left err -> pure $ RuntimeError err
+                Right v ->
+                  if v == inject output
+                    then pure Success
+                    else pure $ Failure output v
+   in traverse evalTest programTests
 
 lookup :: Effs r => Env -> Var -> Sem r Value
 lookup env x = case env Map.!? x of
@@ -132,6 +131,7 @@ prim op vs = case (op, vs) of
   x -> throw (EvalError $ "Bad prim-op: " <> pshow x)
 
 evalCase ::
+  forall r.
   Effs r =>
   Env ->
   Value ->
@@ -140,27 +140,32 @@ evalCase ::
   Sem r Value
 evalCase environment value patterns ks = case patterns of
   [] -> throw . EvalError $ "Non-exhaustive pattern match"
-  (p, Scope xs t) : ps -> case aux [p] (fmap fst xs) [value] environment of
+  (p, Scope xs t) : ps -> aux [p] (fmap fst xs) [value] environment >>= \case
     Nothing -> evalCase environment value ps ks
     Just env -> eval env t ks
   where
+    aux :: [Pattern ()] -> [Var] -> [Value] -> Env -> Sem r (Maybe Env)
     aux (PVar () : ps) (x : xs) (v : vs) env = aux ps xs vs (Map.insert x v env)
     aux (PWild : ps) xs (_ : vs) env = aux ps xs vs env
     aux (PCons (Stx.Record c ps') : ps) xs (Struct c' vs' : vs) env
       | c == c' = aux (ps' <> ps) xs (vs' <> vs) env
-      | otherwise = Nothing
+      | otherwise = pure Nothing
     aux (PCons (Stx.Boolean b) : ps) xs (Boolean b' : vs) env
       | b == b' = aux ps xs vs env
-      | otherwise = Nothing
+      | otherwise = pure Nothing
     aux (PCons (Stx.Number b) : ps) xs (Number b' : vs) env
       | b == b' = aux ps xs vs env
-      | otherwise = Nothing
+      | otherwise = pure Nothing
     aux (PCons (Stx.String b) : ps) xs (String b' : vs) env
       | b == b' = aux ps xs vs env
-      | otherwise = Nothing
-    aux [] [] [] env = Just env
-    aux [] [] _ _ = Nothing
-    aux _ _ _ _ = error "Corrupted pattern"
+      | otherwise = pure Nothing
+    aux [] [] [] env = pure $ Just env
+    aux [] [] _ _ = pure Nothing
+    aux ps xs vs _ = do
+      pprint ps
+      pprint xs
+      pprint vs
+      error "Corrupted pattern"
 
 apply :: Effs r => Value -> [Value] -> [Cont] -> Sem r Value
 apply f vs ks = do

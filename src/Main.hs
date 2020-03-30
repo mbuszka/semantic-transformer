@@ -23,10 +23,11 @@ runTest f = do
     Left err -> pprint err
     Right () -> pure ()
 
-runTests :: MonadIO m => Program Term -> m ()
+runTests :: Member (Embed IO) r => Program Term -> Sem r ()
 runTests pgm = do
   putTextLn "Running tests:"
-  for_ (Eval.tests pgm) \case 
+  tests <- Eval.tests pgm
+  for_  tests \case 
     (name, res) -> do
       pprint' $
         pretty name <+> "..." <> nested 2 (pretty res)
