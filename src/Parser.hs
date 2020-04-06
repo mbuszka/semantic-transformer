@@ -8,10 +8,8 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Polysemy.Error hiding (try)
--- import Text.Megaparsec.Debug
-
 import qualified ScopeCheck
-import Syntax
+import Syntax hiding (mkTerm)
 import Text.Megaparsec hiding (State (..))
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
@@ -20,7 +18,7 @@ import Util
 type Parser a = Parsec Void Text a
 
 data TopLevel
-  = TDef Loc (Var, Def Located)
+  = TDef Loc (Var, Def Term)
   | TDecl Loc (Tp, [Tp])
   | TTest TestCase
 
@@ -42,7 +40,7 @@ lexeme :: Parser a -> Parser a
 lexeme = L.lexeme space
 
 keyword :: Text -> Parser Text
-keyword s = lexeme $ try (string s <* notFollowedBy alphaNumChar)
+keyword s = lexeme $ try (string s <* notFollowedBy (satisfy identRest))
 
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
@@ -54,15 +52,27 @@ brackets :: Parser a -> Parser a
 brackets = between (symbol "[") (symbol "]")
 
 ident :: Parser Text
-ident = mfilter (not . flip elem keywords) . lexeme $ txt
-  where
-    txt = takeWhile1P (Just "identifier") p
-    p '_' = True
-    p '-' = True
-    p c = Char.isLetter c
+ident = mfilter (not . flip elem keywords) $ text
+
+text :: Parser Text
+text =
+  lexeme (Text.cons <$> satisfy identFirst <*> takeWhileP Nothing identRest)
+    <?> "identifier"
+
+identFirst :: Char -> Bool
+identFirst c = case c of
+  '_' -> True
+  '-' -> True
+  '+' -> True
+  '/' -> True
+  '*' -> True
+  _ -> Char.isAlpha c
+
+identRest :: Char -> Bool
+identRest c = identFirst c || Char.isDigit c
 
 tag :: Parser Tag
-tag = SrcTag <$> ident
+tag = SrcTag <$> text
 
 var :: Parser Var
 var = mkVar <$> ident
@@ -70,7 +80,7 @@ var = mkVar <$> ident
 parseType :: Parser Tp
 parseType =
   record
-    <|> ( ident <&> \case
+    <|> ( text <&> \case
             "integer" -> TInt
             "string" -> TStr
             "boolean" -> TBool
@@ -85,13 +95,13 @@ typed = fmap (,Nothing) var <|> brackets do
   tp <- parseType
   pure (v, Just tp)
 
-mkTerm :: Parser (TermF Located) -> Parser Located
+mkTerm :: Parser (TermF Term) -> Parser Term
 mkTerm p = do
   SourcePos _ row col <- getSourcePos
   let loc = Loc (unPos row) (unPos col)
-  Located loc <$> p
+  Term (Just loc) <$> p
 
-parseTerm :: Parser Located
+parseTerm :: Parser Term
 parseTerm = mkTerm (parens expr <|> cons <|> err <|> variable)
   where
     variable = Var <$> var
@@ -109,10 +119,10 @@ parseTerm = mkTerm (parens expr <|> cons <|> err <|> variable)
     case' = keyword "case" *> liftA2 Case parseTerm parsePatterns
     err = keyword "panic" $> Panic
 
-parsePatterns :: Parser (Patterns Located)
+parsePatterns :: Parser (Patterns Term)
 parsePatterns = Patterns <$> many parseCase
 
-parseCase :: Parser (Pattern (), Scope Located)
+parseCase :: Parser (Pattern (), Scope Term)
 parseCase = parens $ do
   (p, xs) <- extractNames <$> pattern
   t <- parseTerm
@@ -121,14 +131,14 @@ parseCase = parens $ do
     pattern =
       choice
         [ PWild <$ keyword "_",
-          PVar <$> var,
-          PCons <$> parseValue pattern
+          PCons <$> parseValue pattern,
+          typed <&> \case (v, tp) -> PVar v tp
         ]
 
 annot :: Parser Annot
 annot = empty
 
-parseDef :: Parser (Var, Def Located)
+parseDef :: Parser (Var, Def Term)
 parseDef = do
   x <- keyword "def" >> var
   as <- Set.fromList <$> many annot
@@ -180,7 +190,7 @@ parseTopLevel = do
       ]
 
 validateProgram ::
-  forall r. Member (Error Err) r => [TopLevel] -> Sem r (Program Located)
+  forall r. Member (Error Err) r => [TopLevel] -> Sem r (Program Term)
 validateProgram topLevels = do
   (defs, types, tests, main) <- aux Map.empty Map.empty [] Nothing topLevels
   pure $
@@ -197,13 +207,13 @@ validateProgram topLevels = do
       (Nothing, TDef _ (SrcVar "main", def) : ts') ->
         aux defs types test (Just def) ts'
       (Just _, TDef l (SrcVar "main", _) : _) ->
-        throw (ScopeError l "Redefinition of main")
+        throw (ScopeError (Just l) "Redefinition of main")
       (_, TDef l (v, def) : ts') -> case Map.lookup v defs of
         Nothing -> aux (Map.insert v def defs) types test main ts'
-        Just _ -> throw (ScopeError l "Redefinition of a top-level function")
+        Just _ -> throw (ScopeError (Just l) "Redefinition of a top-level function")
       (_, TDecl l (n, d) : ts') -> case Map.lookup n types of
         Nothing -> aux defs (Map.insert n d types) test main ts'
-        Just _ -> throw (ScopeError l "Redefinition of a data type")
+        Just _ -> throw (ScopeError (Just l) "Redefinition of a data type")
       (_, TTest t : ts') -> aux defs types (t : test) main ts'
 
 fromFile :: Members '[Embed IO, Error Err] r => FilePath -> Sem r (Program Term)

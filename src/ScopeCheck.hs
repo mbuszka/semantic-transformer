@@ -16,7 +16,7 @@ data Target
 
 type Env = Map Var Target
 
-fromSource :: Member (Error Err) r => Program Located -> Sem r (Program Term)
+fromSource :: Member (Error Err) r => Program Term -> Sem r (Program Term)
 fromSource (Program {..}) = do
   let prim =
         Map.fromList . fmap (\case (k, op) -> (SrcVar k, PrimOp op))
@@ -27,8 +27,8 @@ fromSource (Program {..}) = do
   main <- checkD env programMain
   pure $ Program { programDefinitions = defs, programMain = main, ..}
 
-check :: Member (Error Err) r => Env -> Located -> Sem r Term
-check env (Located loc tm) = Term <$> case tm of
+check :: Member (Error Err) r => Env -> Term -> Sem r Term
+check env (Term loc tm) = Term loc <$> case tm of
   Var v -> do
     when (Map.notMember v env) $
       throw (ScopeError loc $ "Unknown variable: " <> pshow v)
@@ -46,14 +46,14 @@ check env (Located loc tm) = Term <$> case tm of
   Case t ps -> Case <$> check env t <*> checkP env ps
   _ -> traverse (check env) tm
 
-checkS :: Member (Error Err) r => Env -> Scope Located -> Sem r (Scope Term)
+checkS :: Member (Error Err) r => Env -> Scope Term -> Sem r (Scope Term)
 checkS env (Scope xs t) =
   let env' = (Map.fromList . fmap ((,Local) . fst) $ xs) `Map.union` env
    in Scope xs <$> check env' t
 
 checkP ::
-  Member (Error Err) r => Env -> Patterns Located -> Sem r (Patterns Term)
+  Member (Error Err) r => Env -> Patterns Term -> Sem r (Patterns Term)
 checkP env (Patterns ps) = Patterns <$> traverse (traverse (checkS env)) ps
 
-checkD :: Member (Error Err) r => Env -> Def Located -> Sem r (Def Term)
+checkD :: Member (Error Err) r => Env -> Def Term -> Sem r (Def Term)
 checkD env (Def as s) = Def as <$> checkS env s

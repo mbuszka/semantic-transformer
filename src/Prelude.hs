@@ -65,6 +65,7 @@ import GHC.Base
   ( ($),
     (&&),
     Bool (..),
+    Char,
     Eq ((/=), (==)),
     IO,
     Int,

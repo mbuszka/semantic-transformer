@@ -3,7 +3,6 @@ module Syntax
     Bound (..),
     Def (..),
     FreshVar,
-    Located (..),
     Pattern (..),
     Patterns (..),
     PrimOp (..),
@@ -19,8 +18,8 @@ module Syntax
     ValueF (..),
     Var (..),
     extractNames,
-    forget,
     freshVar,
+    mkTerm,
     mkVar,
     insertNames,
     primOps,
@@ -69,7 +68,7 @@ data TermF t
   deriving (Functor, Foldable, Traversable)
 
 data Pattern v
-  = PVar v
+  = PVar v (Maybe Tp)
   | PWild
   | PCons (ValueF (Pattern v))
   deriving (Functor, Foldable, Eq, Ord)
@@ -105,13 +104,19 @@ newtype Value = Value {unValue :: ValueF Value}
   deriving (Eq, Ord, Bound, Pretty)
 
 -- Various syntax representations
-newtype Term = Term {unTerm :: TermF Term}
-  deriving (Bound, Pretty)
+data Term
+  = Term
+      { termLoc :: Maybe Loc,
+        unTerm :: TermF Term
+      }
 
-data Located = Located {locatedLoc :: Loc, locatedTerm :: TermF Located}
+instance Pretty Term where
+  pretty = pretty . unTerm
 
-forget :: Located -> Term
-forget (Located _ t) = Term (fmap forget t)
+instance Bound Term where
+  freeVars = freeVars . unTerm
+
+  rename vs (Term l t) = Term l (rename vs t)
 
 -- Handling of bound variables
 class Bound t where
@@ -163,10 +168,10 @@ extractNames p = (p $> (), toList p)
 insertNames :: Pattern a -> [Var] -> Pattern Var
 insertNames pattern vars = case go pattern vars of
   (p, []) -> p
-  _ -> error "Mismatched variable count"
+  _ -> error "Too many variables to insert into pattern"
   where
-    go (PVar _) (v : vs) = (PVar v, vs)
-    go (PVar _) [] = error "Mismatched pattern variables"
+    go (PVar _ tp) (v : vs) = (PVar v tp, vs)
+    go (PVar _ _) [] = error "Not enough variables to insert into pattern"
     go PWild vs = (PWild, vs)
     go (PCons r) vs = runState (PCons <$> traverse (state . go) r) vs
 
@@ -176,6 +181,9 @@ mkVar = SrcVar
 -- Smart constructors
 scope :: [Var] -> t -> Scope t
 scope vs = Scope (fmap (,Nothing) vs)
+
+mkTerm :: TermF Term -> Term
+mkTerm = Term Nothing
 
 primOps :: Map Text PrimOp
 primOps =
@@ -196,8 +204,8 @@ instance Pretty Var where
   pretty (SrcVar v) = pretty v
   pretty (GenVar n) = "gen-" <> pretty n
 
-instance Pretty v => Pretty (Pattern v) where
-  pretty (PVar v) = pretty v
+instance Pretty (Pattern Var) where
+  pretty (PVar v tp) = variable (v, tp)
   pretty PWild = "_"
   pretty (PCons r) = pretty r
 
@@ -286,7 +294,7 @@ prettyTerm term = case term of
   Panic -> "panic"
 
 variable :: (Var, Maybe Tp) -> Doc ann
-variable (v, Nothing) = pretty v 
+variable (v, Nothing) = pretty v
 variable (v, Just tp) = brackets . aligned' $ [pretty v, pretty tp]
 
 variables :: [(Var, Maybe Tp)] -> Doc ann

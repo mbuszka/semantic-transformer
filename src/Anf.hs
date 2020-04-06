@@ -45,8 +45,8 @@ fromSource :: Member FreshVar r => Program Term -> Sem r (Program Anf)
 fromSource = traverse toAnf
 
 toSource :: Anf -> Term
-toSource (Atom a) = Term (fmap toSource a)
-toSource (Expr e) = Term (fmap toSource e)
+toSource (Atom a) = mkTerm (fmap toSource a)
+toSource (Expr e) = mkTerm (fmap toSource e)
 
 instance Pretty Anf where
   pretty (Atom t) = pretty t

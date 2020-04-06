@@ -82,7 +82,7 @@ nextLabel = do
   return lbl
 
 label :: Effs r => Term -> Sem r Label
-label (Term t) = do
+label (Term _ t) = do
   lbl <- nextLabel
   t' <- traverse label t
   modify (Map.insert lbl t')

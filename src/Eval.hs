@@ -105,7 +105,7 @@ eval env term cont = case unTerm term of
     apply f' xs' cont
   Let t (Scope [(x, _)] b) -> eval env t (CLet x env b : cont)
   Let _ _ -> throw (EvalError "Let only binds a single variable")
-  Case t (Patterns ps) -> do
+  Case t ps -> do
     v <- aval env t
     evalCase env v ps cont
   Panic -> throw (EvalError "PANIC")
@@ -130,42 +130,44 @@ prim op vs = case (op, vs) of
   (Not, [Boolean b]) -> pure $ Boolean (not b)
   x -> throw (EvalError $ "Bad prim-op: " <> pshow x)
 
-evalCase ::
-  forall r.
-  Effs r =>
-  Env ->
-  Value ->
-  [(Pattern (), Scope Term)] ->
-  [Cont] ->
-  Sem r Value
-evalCase environment value patterns ks = case patterns of
+evalCase :: Effs r => Env -> Value -> Patterns Term -> [Cont] -> Sem r Value
+evalCase env value (Patterns patterns) ks = case patterns of
   [] -> throw . EvalError $ "Non-exhaustive pattern match"
-  (p, Scope xs t) : ps -> aux [p] (fmap fst xs) [value] environment >>= \case
-    Nothing -> evalCase environment value ps ks
-    Just env -> eval env t ks
-  where
-    aux :: [Pattern ()] -> [Var] -> [Value] -> Env -> Sem r (Maybe Env)
-    aux (PVar () : ps) (x : xs) (v : vs) env = aux ps xs vs (Map.insert x v env)
-    aux (PWild : ps) xs (_ : vs) env = aux ps xs vs env
-    aux (PCons (Stx.Record c ps') : ps) xs (Struct c' vs' : vs) env
-      | c == c' = aux (ps' <> ps) xs (vs' <> vs) env
-      | otherwise = pure Nothing
-    aux (PCons (Stx.Boolean b) : ps) xs (Boolean b' : vs) env
-      | b == b' = aux ps xs vs env
-      | otherwise = pure Nothing
-    aux (PCons (Stx.Number b) : ps) xs (Number b' : vs) env
-      | b == b' = aux ps xs vs env
-      | otherwise = pure Nothing
-    aux (PCons (Stx.String b) : ps) xs (String b' : vs) env
-      | b == b' = aux ps xs vs env
-      | otherwise = pure Nothing
-    aux [] [] [] env = pure $ Just env
-    aux [] [] _ _ = pure Nothing
-    aux ps xs vs _ = do
-      pprint ps
-      pprint xs
-      pprint vs
-      error "Corrupted pattern"
+  (p, Scope xs t) : ps -> do
+    let p' = insertNames p (fmap fst xs)
+    case match env p' value of
+      Nothing -> evalCase env value (Patterns ps) ks
+      Just env' -> eval env' t ks
+
+matchAll :: Env -> [Pattern Var] -> [Value] -> Maybe Env
+matchAll env [] [] = Just env
+matchAll env (p:ps) (v:vs) = do
+  env' <- match env p v
+  matchAll env' ps vs
+matchAll _ _ _ = Nothing
+
+match :: Env -> Pattern Var -> Value -> Maybe Env
+match env p v = case p of
+  PVar x Nothing -> Just $ Map.insert x v env
+  PVar x (Just tp) | matchTp tp v -> Just $ Map.insert x v env
+  PCons c -> matchCons env c v
+  PWild -> Just env
+  _ -> Nothing
+
+matchTp :: Tp -> Value -> Bool
+matchTp tp v = case (tp, v) of
+  (TInt, Number _) -> True
+  (TStr, String _) -> True
+  (TBool, Boolean _) -> True
+  _ -> False
+
+matchCons :: Env -> Stx.ValueF (Pattern Var) -> Value -> Maybe Env
+matchCons env p v = case (p, v) of
+  (Stx.Boolean l, Boolean r) | l == r -> Just env
+  (Stx.Number l, Number r) | l == r -> Just env
+  (Stx.String l, String r) | l == r -> Just env
+  (Stx.Record l ps, Struct r vs) | l == r -> matchAll env ps vs
+  _ -> Nothing
 
 apply :: Effs r => Value -> [Value] -> [Cont] -> Sem r Value
 apply f vs ks = do

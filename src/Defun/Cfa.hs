@@ -4,7 +4,6 @@ module Defun.Cfa
 where
 
 import Control.Applicative ((<|>), empty)
-import Control.Monad (guard)
 import Data.List (nub)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -91,7 +90,7 @@ eval env lbl k = term lbl >>= \case
   Let _ _ -> error "Bad syntax"
   Case t ps -> do
     v <- aval env t
-    applyCases env v ps k
+    evalCase env v ps k
   Panic -> empty
   _ -> do
     v <- aval env lbl
@@ -115,27 +114,40 @@ continue val k = derefK k >>= \case
   CLet var env body k' -> pure $ Eval (Map.insert var val env) body k'
   Halt -> empty
 
-applyCases :: Effs r => Env -> ValuePtr -> Patterns Label -> ContPtr -> Sem r Config
-applyCases environment vPtr (Patterns patterns) k =
-  let aux env (PVar x : ps) (v : vs) = aux (Map.insert x v env) ps vs
-      aux env (PWild : ps) (_ : vs) = aux env ps vs
-      aux env (PCons c : ps) (v : vs) = do
-        v' <- derefV v
-        case (c, v') of
-          (Stx.Record t ps', Record t' vs') -> do
-            guard (t' == t)
-            guard (length ps' == length vs')
-            aux env (ps' <> ps) (vs' <> vs)
-          (Stx.Number _, Number) -> aux env ps vs
-          (Stx.String _, String) -> aux env ps vs
-          (Stx.Boolean _, Boolean) -> aux env ps vs
-          _ -> empty
-      aux env [] [] = pure env
-      aux _ _ _ = empty
-   in do
-        (p, Scope xs l) <- oneOf patterns
-        env <- aux environment [insertNames p (fmap fst xs)] [vPtr]
-        pure $ Eval env l k
+evalCase :: Effs r => Env -> ValuePtr -> Patterns Label -> ContPtr -> Sem r Config
+evalCase env vPtr (Patterns ps) k = do
+  (p, Scope xs l) <- oneOf ps
+  env' <- match env (insertNames p (fmap fst xs)) vPtr
+  pure $ Eval env' l k
+
+match :: Effs r => Env -> Pattern Var -> ValuePtr -> Sem r Env
+match env p vPtr = do
+  case p of
+    PVar x Nothing -> pure $ Map.insert x vPtr env
+    PWild -> pure env
+    PVar x (Just tp) -> do
+      v <- derefV vPtr
+      case (tp, v) of
+        (TInt, Number) -> pure $ Map.insert x vPtr env
+        (TStr, String) -> pure $ Map.insert x vPtr env
+        (TBool, Boolean) -> pure $ Map.insert x vPtr env
+        _ -> empty
+    PCons c -> do
+      v <- derefV vPtr
+      case (c, v) of
+        (Stx.Number _, Number) -> pure env
+        (Stx.String _, String) -> pure env
+        (Stx.Boolean _, Boolean) -> pure env
+        (Stx.Record l ps, Record r vs) | l == r -> matchAll env ps vs
+        _ -> empty
+
+matchAll :: Effs r => Env -> [Pattern Var] -> [ValuePtr] -> Sem r Env
+matchAll env [] [] = pure env
+matchAll env (p : ps) (v : vs) = do
+  env' <- match env p v
+  matchAll env' ps vs
+matchAll _ _ _ = empty
+
 
 apply :: Effs r => ValuePtr -> [ValuePtr] -> ContPtr -> Sem r Config
 apply f as k = derefV f >>= \case

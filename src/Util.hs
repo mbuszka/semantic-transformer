@@ -7,12 +7,12 @@ where
 import Pretty
 import Data.Text.Prettyprint.Doc
 
-data Loc = Loc Int Int
+data Loc = Loc !Int !Int
 
 data Err
   = ParseError Text
   | ModuleError Text
-  | ScopeError Loc Text
+  | ScopeError (Maybe Loc) Text
   | EvalError Text
   | InternalError Text
 

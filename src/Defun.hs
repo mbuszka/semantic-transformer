@@ -48,15 +48,15 @@ fromSource program = do
   let genBody vs t@(TopTag v) =
         pure
           ( PCons (Stx.Record t []),
-            Scope [] (Term . App (Term . Var $ v) $ fmap (Term . Var) vs)
+            Scope [] (mkTerm . App (mkTerm . Var $ v) $ fmap (mkTerm . Var) vs)
           )
       genBody vs tag = do
         let (fvs, (Scope xs b)) = lambdas' Map.! tag
         let b' = foldl' sub b (fmap fst xs `zip` vs)
-        pure (PCons (Stx.Record tag (fmap (const (PVar ())) fvs)), scope fvs b')
+        pure (PCons (Stx.Record tag (fmap (const (PVar () Nothing)) fvs)), scope fvs b')
   let genApply (tags, (var, f : vs)) = do
         ps <- traverse (genBody vs) . toList $ tags
-        let b = Term $ Case (Term . Var $ f) (Patterns ps)
+        let b = mkTerm $ Case (mkTerm . Var $ f) (Patterns ps)
         pure $ (var, Def Set.empty (scope (f : vs) b))
       genApply _ = throw (InternalError "Malformed analysis result")
   newDefs <- traverse genApply . Map.toList $ applys
@@ -75,19 +75,19 @@ runDefun label@(Label x) = do
       let fvs = toList $ freeVars term' Set.\\ topVars
           tag = GenTag x
       output (tag, (fvs, s))
-      pure . Term . Cons . Stx.Record tag . fmap (Term . Var) $ fvs
+      pure . mkTerm . Cons . Stx.Record tag . fmap (mkTerm . Var) $ fvs
     Var {} -> do
       functions <- getFuns label
       case functions of
-        [TopTag v] -> pure . Term . Cons $ Stx.Record (TopTag v) []
-        _ -> pure . Term $ term'
-    App (Term (Cons (Stx.Record (TopTag v) []))) xs ->
-      pure . Term $ App (Term . Var $ v) xs
+        [TopTag v] -> pure . mkTerm . Cons $ Stx.Record (TopTag v) []
+        _ -> pure . mkTerm $ term'
+    App (Term l (Cons (Stx.Record (TopTag v) []))) xs ->
+      pure . Term l $ App (mkTerm . Var $ v) xs
     App f xs -> do
       let App f' _ = term
       apply <- getApply f' (length xs)
-      pure . Term $ App (Term . Var $ apply) (f : xs)
-    _ -> pure . Term $ term'
+      pure . mkTerm $ App (mkTerm . Var $ apply) (f : xs)
+    _ -> pure . mkTerm $ term'
 
 getTerm :: Member (Reader (Map Label Labeled)) r => Label -> Sem r Labeled
 getTerm lbl = do
