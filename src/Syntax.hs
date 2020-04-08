@@ -76,7 +76,7 @@ data Pattern v
 newtype Patterns t = Patterns [(Pattern (), Scope t)]
   deriving (Functor, Foldable, Traversable, Eq, Ord)
 
-data Var = SrcVar Text | GenVar Int
+data Var = SrcVar Text | GenVar Text Int
   deriving (Eq, Ord, Show)
 
 data Tag = SrcTag Text | GenTag Int | TopTag Var
@@ -202,7 +202,7 @@ primOps =
 -- Pretty printing
 instance Pretty Var where
   pretty (SrcVar v) = pretty v
-  pretty (GenVar n) = "gen-" <> pretty n
+  pretty (GenVar t n) = pretty t <> "-" <> pretty n
 
 instance Pretty (Pattern Var) where
   pretty (PVar v tp) = variable (v, tp)
@@ -284,7 +284,7 @@ prettyTerm term = case term of
   App f ts ->
     parens (pretty f <> nested' 2 ts)
   Prim op ts ->
-    parens ("#" <+> pretty op <> nested' 2 ts)
+    "#" <> parens (pretty op <> nested' 2 ts)
   Let t (Scope [v] b) ->
     parens ("let" <+> pretty v <> body (pretty t) (pretty b))
   Let _ _ ->
@@ -302,18 +302,21 @@ variables = parens . aligned' . fmap variable
 
 -- Fresh variable generation
 data FreshVar m a where
-  FreshVar :: FreshVar m Var
+  FreshVar :: Text -> FreshVar m Var
 
 $(makeSem ''FreshVar)
 
 runFreshVar :: Member (Embed IO) r => Sem (FreshVar ': r) a -> Sem r a
 runFreshVar sem = do
-  ref <- embed $ newIORef (0 :: Int)
+  ref <- embed $ newIORef (Map.empty :: Map Text Int)
   interpret
     ( \case
-        FreshVar -> do
-          x <- embed $ readIORef ref
-          embed $ writeIORef ref (x + 1)
-          return (GenVar x)
+        FreshVar t -> do
+          names <- embed $ readIORef ref
+          let (n, m) = case Map.lookup t names of
+                Nothing -> (1, Map.insert t 1 names)
+                Just x -> (x + 1, Map.insert t (x + 1) names)
+          embed $ writeIORef ref m
+          return (GenVar t n)
     )
     sem

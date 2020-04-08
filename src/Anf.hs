@@ -12,7 +12,7 @@ atom = pure . Atom
 atomic :: Member FreshVar r => Term -> (Anf -> Sem r Anf) -> Sem r Anf
 atomic term k = toAnf term >>= \case
   Expr t -> do
-    v <- freshVar
+    v <- freshVar "var"
     body <- k (Atom $ Var v)
     pure . Expr . Let (Expr t) $ Scope [(v, Nothing)] body
   Atom t -> k (Atom t)

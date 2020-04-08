@@ -11,9 +11,18 @@ import Polysemy.Error hiding (try)
 import qualified ScopeCheck
 import Syntax hiding (mkTerm)
 import Text.Megaparsec hiding (State (..))
-import Text.Megaparsec.Char
+import Text.Megaparsec.Char hiding (space)
 import qualified Text.Megaparsec.Char.Lexer as L
 import Util
+
+fromFile :: Members '[Embed IO, Error Err] r => FilePath -> Sem r (Program Term)
+fromFile f = do
+  program <- readFile f
+  case runParser (many parseTopLevel <* eof) f program of
+    Left err -> throw . ParseError . Text.pack . errorBundlePretty $ err
+    Right t -> validateProgram t >>= ScopeCheck.fromSource
+
+-- Parser
 
 type Parser a = Parsec Void Text a
 
@@ -21,55 +30,6 @@ data TopLevel
   = TDef Loc (Var, Def Term)
   | TDecl Loc (Tp, [Tp])
   | TTest TestCase
-
-keywords :: [Text]
-keywords =
-  [ "_",
-    "case",
-    "def",
-    "def-data",
-    "panic",
-    "fun",
-    "let"
-  ]
-
-symbol :: Text -> Parser Text
-symbol = L.symbol space
-
-lexeme :: Parser a -> Parser a
-lexeme = L.lexeme space
-
-keyword :: Text -> Parser Text
-keyword s = lexeme $ try (string s <* notFollowedBy (satisfy identRest))
-
-parens :: Parser a -> Parser a
-parens = between (symbol "(") (symbol ")")
-
-braces :: Parser a -> Parser a
-braces = between (symbol "{") (symbol "}")
-
-brackets :: Parser a -> Parser a
-brackets = between (symbol "[") (symbol "]")
-
-ident :: Parser Text
-ident = mfilter (not . flip elem keywords) $ text
-
-text :: Parser Text
-text =
-  lexeme (Text.cons <$> satisfy identFirst <*> takeWhileP Nothing identRest)
-    <?> "identifier"
-
-identFirst :: Char -> Bool
-identFirst c = case c of
-  '_' -> True
-  '-' -> True
-  '+' -> True
-  '/' -> True
-  '*' -> True
-  _ -> Char.isAlpha c
-
-identRest :: Char -> Bool
-identRest c = identFirst c || Char.isDigit c
 
 tag :: Parser Tag
 tag = SrcTag <$> text
@@ -152,13 +112,6 @@ parseDecl = do
   tps <- many $ parseType
   pure (name, tps)
 
-stringLiteral :: Parser Text
-stringLiteral =
-  lexeme $ fmap Text.pack $ char '\"' *> manyTill L.charLiteral (char '\"')
-
-numberLiteral :: Parser Int
-numberLiteral = lexeme $ L.signed (pure ()) L.decimal
-
 parseValue :: Parser v -> Parser (ValueF v)
 parseValue subTerm =
   choice
@@ -216,9 +169,65 @@ validateProgram topLevels = do
         Just _ -> throw (ScopeError (Just l) "Redefinition of a data type")
       (_, TTest t : ts') -> aux defs types (t : test) main ts'
 
-fromFile :: Members '[Embed IO, Error Err] r => FilePath -> Sem r (Program Term)
-fromFile f = do
-  program <- readFile f
-  case runParser (many parseTopLevel <* eof) f program of
-    Left err -> throw . ParseError . Text.pack . errorBundlePretty $ err
-    Right t -> validateProgram t >>= ScopeCheck.fromSource
+-- Lexer
+
+keywords :: Set Text
+keywords =
+  Set.fromList
+    [ "_",
+      "case",
+      "def",
+      "def-data",
+      "panic",
+      "fun",
+      "let"
+    ]
+
+braces :: Parser a -> Parser a
+braces = between (symbol "{") (symbol "}")
+
+brackets :: Parser a -> Parser a
+brackets = between (symbol "[") (symbol "]")
+
+parens :: Parser a -> Parser a
+parens = between (symbol "(") (symbol ")")
+
+ident :: Parser Text
+ident = mfilter (not . flip elem keywords) $ text
+
+keyword :: Text -> Parser Text
+keyword s = lexeme $ try (string s <* notFollowedBy (satisfy identRest))
+
+text :: Parser Text
+text =
+  lexeme (Text.cons <$> satisfy identFirst <*> takeWhileP Nothing identRest)
+
+stringLiteral :: Parser Text
+stringLiteral =
+  lexeme $ fmap Text.pack $ char '\"' *> manyTill L.charLiteral (char '\"')
+
+numberLiteral :: Parser Int
+numberLiteral = lexeme $ L.signed (pure ()) L.decimal
+
+-- Helpers
+
+symbol :: Text -> Parser Text
+symbol = L.symbol space
+
+lexeme :: Parser a -> Parser a
+lexeme = L.lexeme space
+
+space :: Parser ()
+space = L.space space1 (L.skipLineComment ";") empty
+
+identFirst :: Char -> Bool
+identFirst c = case c of
+  '_' -> True
+  '-' -> True
+  '+' -> True
+  '/' -> True
+  '*' -> True
+  _ -> Char.isAlpha c
+
+identRest :: Char -> Bool
+identRest c = identFirst c || Char.isDigit c

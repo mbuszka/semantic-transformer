@@ -72,7 +72,8 @@ runDefun label@(Label x) = do
   case term' of
     Abs s -> do
       topVars <- ask
-      let fvs = toList $ freeVars term' Set.\\ topVars
+      appVars <- gets (Set.fromList . fmap fst . Map.elems)
+      let fvs = toList $ freeVars term' Set.\\ Set.union topVars appVars
           tag = GenTag x
       output (tag, (fvs, s))
       pure . mkTerm . Cons . Stx.Record tag . fmap (mkTerm . Var) $ fvs
@@ -109,11 +110,11 @@ getApply lbl n = do
   mby <- gets (Map.lookup functions)
   case mby of
     Nothing -> do
-      v <- freshVar
-      vs <- sequence . take (n + 1) $ freshVars
+      v <- freshVar "apply"
+      vs <- sequence . take (n + 1) $ freshVar "fn" : freshVars
       modify (Map.insert functions (v, vs))
       pure v
     Just (v, _) ->
       pure v
   where
-    freshVars = freshVar : freshVars
+    freshVars = freshVar "val" : freshVars

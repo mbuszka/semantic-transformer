@@ -22,7 +22,7 @@ toCps (Expr tm) k = case tm of
     case k of
       Var{} -> mkTerm . Case t' <$> traverse (flip toCps k) ps
       _ -> do
-        k' <- freshVar
+        k' <- freshVar "cont"
         ps' <- traverse (flip toCps (Var k')) ps
         term $ Let (mkTerm k) (Scope [(k', Nothing)] (mkTerm $ Case t' ps'))
   Panic -> term Panic
@@ -31,7 +31,7 @@ toCps (Expr tm) k = case tm of
 atomic :: Member FreshVar r => TermF Anf -> Sem r Term
 atomic (Var v) = term $ Var v
 atomic (Abs (Scope xs t)) = do
-  k' <- freshVar
+  k' <- freshVar "cont"
   t' <- toCps t (Var k')
   term . Abs $ Scope (xs <> [(k', Nothing)]) t'
 atomic (Cons r) = mkTerm . Cons <$> traverse atomic' r
@@ -46,13 +46,13 @@ fromAnf :: Member FreshVar r => Program Anf -> Sem r (Program Term)
 fromAnf Program {..} = do
   defs <- traverse aux (programDefinitions)
   main <- do
-    a <- freshVar
+    a <- freshVar "x"
     let k = Abs . Scope [(a, Nothing)] . mkTerm $ Var a
     traverse (flip toCps k) (programMain)
   pure $ Program { programDefinitions = defs, programMain = main, .. }
   where
     aux :: Member FreshVar r => Def Anf -> Sem r (Def Term)
     aux (Def as (Scope xs t)) = do
-        k <- freshVar
+        k <- freshVar "cont"
         t' <- toCps t (Var k)
         pure (Def as (Scope (xs <> [(k, Nothing)]) t'))
