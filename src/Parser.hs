@@ -18,11 +18,26 @@ import Util
 fromFile :: Members '[Embed IO, Error Err] r => FilePath -> Sem r (Program Term)
 fromFile f = do
   program <- readFile f
-  case runParser (many parseTopLevel <* eof) f program of
+  case runParser emb f program of
     Left err -> throw . ParseError . Text.pack . errorBundlePretty $ err
-    Right t -> validateProgram t >>= ScopeCheck.fromSource
+    Right (p, t, e) -> validateProgram t >>= ScopeCheck.fromSource
 
 -- Parser
+
+begin :: Parser Text
+begin = string "; begin interpreter" <* takeWhileP Nothing (/= '\n') <* space
+
+end :: Parser Text
+end = string "; end interpreter" <* takeWhileP Nothing (/= '\n')
+
+emb :: Parser (Text, [TopLevel], Text)
+emb = do
+  (cs, b) <- manyTill_ anySingle begin
+  let prologue = (Text.pack cs <> b)
+  (ts, e) <- manyTill_ parseTopLevel end
+  epilogue <- takeRest
+  pure (prologue, ts, e <> epilogue)
+
 
 type Parser a = Parsec Void Text a
 
@@ -67,7 +82,7 @@ parseTerm = mkTerm (parens expr <|> cons <|> err <|> variable)
     variable = Var <$> var
     cons = Cons <$> parseValue parseTerm
     expr = choice [lam, let', case', app]
-    lam = keyword "fun" >> do
+    lam = keyword "lambda" >> do
       xs <- parens (many typed)
       Abs . Scope xs <$> parseTerm
     let' = keyword "let" >> do
@@ -76,8 +91,8 @@ parseTerm = mkTerm (parens expr <|> cons <|> err <|> variable)
       rhs <- parseTerm
       pure $ Let lhs (Scope [v] rhs)
     app = liftA2 App parseTerm (many parseTerm)
-    case' = keyword "case" *> liftA2 Case parseTerm parsePatterns
-    err = keyword "panic" $> Panic
+    case' = keyword "match" *> liftA2 Case parseTerm parsePatterns
+    err = keyword "error" >> stringLiteral $> Panic
 
 parsePatterns :: Parser (Patterns Term)
 parsePatterns = Patterns <$> many parseCase
@@ -92,8 +107,12 @@ parseCase = parens $ do
       choice
         [ PWild <$ keyword "_",
           PCons <$> parseValue pattern,
-          typed <&> \case (v, tp) -> PVar v tp
+          v
         ]
+    v = (PVar <$> var <*> pure Nothing) <|> brackets do
+      t <- parseType
+      v <- var
+      pure $ PVar v (Just t)
 
 annot :: Parser Annot
 annot = empty
@@ -115,7 +134,7 @@ parseDecl = do
 parseValue :: Parser v -> Parser (ValueF v)
 parseValue subTerm =
   choice
-    [ Number <$> numberLiteral,
+    [ Number <$> try numberLiteral,
       String <$> stringLiteral,
       Boolean True <$ keyword "#t",
       Boolean False <$ keyword "#f",
@@ -175,11 +194,11 @@ keywords :: Set Text
 keywords =
   Set.fromList
     [ "_",
-      "case",
+      "match",
       "def",
       "def-data",
-      "panic",
-      "fun",
+      "error",
+      "lambda",
       "let"
     ]
 
@@ -218,7 +237,7 @@ lexeme :: Parser a -> Parser a
 lexeme = L.lexeme space
 
 space :: Parser ()
-space = L.space space1 (L.skipLineComment ";") empty
+space = L.space space1 (L.skipLineComment ";;") empty
 
 identFirst :: Char -> Bool
 identFirst c = case c of
@@ -227,6 +246,7 @@ identFirst c = case c of
   '+' -> True
   '/' -> True
   '*' -> True
+  '?' -> True
   _ -> Char.isAlpha c
 
 identRest :: Char -> Bool
