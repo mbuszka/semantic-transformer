@@ -25,6 +25,7 @@ module Prelude
     module GHC.Show,
     module Polysemy,
     error,
+    identity,
     pprint,
     pprint',
     pshow,
@@ -85,7 +86,7 @@ import GHC.Num ((*), (+), (-), Num)
 import GHC.Real (Integral(..))
 import GHC.Show (Show (show))
 import GHC.Stack (HasCallStack)
-import Polysemy
+import Polysemy hiding (run, transform)
 
 pprint' :: MonadIO m => Doc ann -> m ()
 pprint' = liftIO . Text.putStrLn . pshow'
@@ -107,3 +108,7 @@ readFile = liftIO . Text.readFile
 
 error :: HasCallStack => Text -> a
 error = Base.error . Text.unpack
+
+{-# INLINE identity #-}
+identity :: forall a. a -> a
+identity x = x

@@ -25,18 +25,23 @@ source-repository head
 executable semt
   main-is:             Main.hs
   other-modules:
-    Anf
-    Cps
-    Defun
+    Pipeline
+    Pipeline.Anf
+    Pipeline.Cps
+    Pipeline.Defun
+    Pipeline.Scope
+    Pipeline.Structure
     Defun.Cfa
     Defun.Labeled
-    Eval
+    -- Eval
     Parser
     Prelude
-    Pretty
-    ScopeCheck
     Syntax
+    Syntax.Scoped
+    Syntax.Source
+    Syntax.Term
     Util
+    Util.Pretty
   default-extensions:
     BlockArguments
     ConstraintKinds
@@ -70,6 +75,7 @@ executable semt
     , polysemy-plugin
     , megaparsec
     , mtl
+    , optics
     , optparse-applicative
     , parser-combinators
     , prettyprinter

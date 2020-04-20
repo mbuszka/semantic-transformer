@@ -2,7 +2,10 @@ module Syntax
   ( Annot (..),
     Bound (..),
     Def (..),
+    DefStruct (..),
     FreshVar,
+    Fvs,
+    Label (..),
     Pattern (..),
     Patterns (..),
     PrimOp (..),
@@ -10,21 +13,21 @@ module Syntax
     Program (..),
     Scope (..),
     Tag (..),
-    Term (..),
+    Target (..),
     TermF (..),
-    TestCase (..),
     Tp (..),
-    Value (..),
     ValueF (..),
     Var (..),
     extractNames,
+    freshTag,
     freshVar,
-    mkTerm,
     mkVar,
     insertNames,
     primOps,
     runFreshVar,
     scope,
+    scopeBody,
+    scopeVars,
   )
 where
 
@@ -32,14 +35,14 @@ import Control.Monad.State.Strict
 import Data.IORef
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import Pretty
-import Util
+import Util.Pretty
+-- import Util
 
 data Program t
   = Program
       { programDefinitions :: Map Var (Def t),
         programDatatypes :: Map Tp [Tp],
-        programTests :: [TestCase],
+        programStructs :: [DefStruct],
         programMain :: Def t
       }
   deriving (Functor, Foldable, Traversable)
@@ -47,21 +50,31 @@ data Program t
 data Def t = Def {defAnnotations :: Set Annot, defScope :: Scope t}
   deriving (Functor, Foldable, Traversable)
 
+data DefStruct = DefStruct {structName :: Tag, structFields :: [Var]}
+
 data Annot
   = NoCps
   deriving (Eq, Ord)
 
-data TestCase = TestCase Text [Value] Value
-
 data PrimOp = Add | Sub | Mul | Div | Neg | And | Or | Not | Eq
   deriving (Eq, Ord)
+
+data Target
+  = Global
+  | Local
+  | PrimOp
+  deriving (Eq, Ord)
+
+newtype Label = Label {unLabel :: Int} deriving (Eq, Ord, Pretty)
+
+type Fvs = Map Var Target
 
 data TermF t
   = Var Var
   | Abs (Scope t)
   | App t [t]
-  | Prim PrimOp [t]
-  | Let t (Scope t)
+  | -- | Prim PrimOp [t]
+    Let t (Scope t)
   | Case t (Patterns t)
   | Cons (ValueF t)
   | Panic
@@ -76,11 +89,11 @@ data Pattern v
 newtype Patterns t = Patterns [(Pattern (), Scope t)]
   deriving (Functor, Foldable, Traversable, Eq, Ord)
 
-data Var = SrcVar Text | GenVar Text Int
-  deriving (Eq, Ord, Show)
+newtype Var = MkVar {unVar :: Text}
+  deriving (Eq, Ord, Show, Pretty)
 
-data Tag = SrcTag Text | GenTag Int | TopTag Var
-  deriving (Eq, Ord, Show)
+newtype Tag = MkTag {unTag :: Text}
+  deriving (Eq, Ord, Show, Pretty)
 
 data Tp
   = TData Text
@@ -99,24 +112,6 @@ data ValueF t
   | Boolean Bool
   | Record Tag [t]
   deriving (Eq, Ord, Functor, Foldable, Traversable)
-
-newtype Value = Value {unValue :: ValueF Value}
-  deriving (Eq, Ord, Bound, Pretty)
-
--- Various syntax representations
-data Term
-  = Term
-      { termLoc :: Maybe Loc,
-        unTerm :: TermF Term
-      }
-
-instance Pretty Term where
-  pretty = pretty . unTerm
-
-instance Bound Term where
-  freeVars = freeVars . unTerm
-
-  rename vs (Term l t) = Term l (rename vs t)
 
 -- Handling of bound variables
 class Bound t where
@@ -176,36 +171,43 @@ insertNames pattern vars = case go pattern vars of
     go (PCons r) vs = runState (PCons <$> traverse (state . go) r) vs
 
 mkVar :: Text -> Var
-mkVar = SrcVar
+mkVar = MkVar
 
 -- Smart constructors
 scope :: [Var] -> t -> Scope t
 scope vs = Scope (fmap (,Nothing) vs)
 
-mkTerm :: TermF Term -> Term
-mkTerm = Term Nothing
+scopeVars :: Scope e -> [Var]
+scopeVars (Scope xs _) = fmap fst xs
 
-primOps :: Map Text PrimOp
+scopeBody :: Scope e -> e
+scopeBody (Scope _ e) = e
+
+-- mkTerm :: TermF Term -> Term
+-- mkTerm = Term Nothing
+
+primOps :: Map Var PrimOp
 primOps =
   Map.fromList
-    [ ("add", Add),
-      ("sub", Sub),
-      ("mul", Mul),
-      ("div", Div),
-      ("neg", Neg),
-      ("and", And),
-      ("not", Not),
-      ("or", Or),
-      ("eq", Eq)
+    [ (MkVar "+", Add),
+      (MkVar "-", Sub),
+      (MkVar "*", Mul),
+      (MkVar "/", Div),
+      (MkVar "neg", Neg),
+      (MkVar "and", And),
+      (MkVar "not", Not),
+      (MkVar "or", Or),
+      (MkVar "eq?", Eq)
     ]
 
 -- Pretty printing
-instance Pretty Var where
-  pretty (SrcVar v) = pretty v
-  pretty (GenVar t n) = pretty t <> "-" <> pretty n
+-- instance Pretty Var where
+--   pretty (SrcVar v) = pretty v
+--   pretty (GenVar t n) = pretty t <> "-" <> pretty n
 
 instance Pretty (Pattern Var) where
-  pretty (PVar v tp) = variable (v, tp)
+  pretty (PVar v Nothing) = pretty v
+  pretty (PVar v (Just tp)) = brackets $ pretty tp <+> pretty v
   pretty PWild = "_"
   pretty (PCons r) = pretty r
 
@@ -217,7 +219,7 @@ instance Pretty Annot where
 
 instance Pretty t => Pretty (Program t) where
   pretty Program {..} =
-    types <> hardline <> main <> hardline <> defs <> hardline <> tests
+    types <> hardline <> main <> hardline <> defs <> hardline <> structs
     where
       defs = rows . fmap def . Map.toList $ programDefinitions
       def (name, Def _ (Scope vs t)) =
@@ -232,7 +234,7 @@ instance Pretty t => Pretty (Program t) where
           <> hardline
       main = parens ("def main" <> body (variables mvs) (pretty mb))
       Def _ (Scope mvs mb) = programMain
-      tests = rows . fmap pretty $ programTests
+      structs = rows . fmap pretty $ programStructs
 
 instance Pretty v => Pretty (ValueF v) where
   pretty (Number n) = pretty n
@@ -241,10 +243,10 @@ instance Pretty v => Pretty (ValueF v) where
   pretty (Boolean True) = "#t"
   pretty (Boolean False) = "#f"
 
-instance Pretty TestCase where
-  pretty (TestCase desc inputs output) =
-    let vs = aligned' [parens (aligned inputs), pretty output]
-     in parens ("def-test" <+> escape desc <> nested 2 vs)
+-- instance Pretty TestCase where
+--   pretty (TestCase desc inputs output) =
+--     let vs = aligned' [parens (aligned inputs), pretty output]
+--      in parens ("def-test" <+> escape desc <> nested 2 vs)
 
 instance Pretty t => Pretty (Patterns t) where
   pretty (Patterns ps) = case ps of
@@ -258,10 +260,13 @@ instance Pretty t => Pretty (Patterns t) where
 instance Pretty t => Pretty (Scope t) where
   pretty (Scope xs t) = variables xs <+> pretty t
 
-instance Pretty Tag where
-  pretty (SrcTag c) = pretty c
-  pretty (GenTag lbl) = "lam-" <> pretty lbl
-  pretty (TopTag v) = pretty v
+instance Pretty DefStruct where
+  pretty DefStruct {..} =
+    parens $ "struct" <+> pretty structName <+> parens (aligned structFields) <+> "#:prefab"
+-- instance Pretty Tag where
+--   pretty (SrcTag c) = pretty c
+--   pretty (GenTag lbl) = "lam-" <> pretty lbl
+--   pretty (TopTag v) = pretty v
 
 instance Pretty Tp where
   pretty (TRecord c ts) = braces (pretty c <> (nested' 2 ts))
@@ -283,15 +288,15 @@ prettyTerm term = case term of
     parens ("fun" <> body (variables vs) (pretty t))
   App f ts ->
     parens (pretty f <> nested' 2 ts)
-  Prim op ts ->
-    "#" <> parens (pretty op <> nested' 2 ts)
+  -- Prim op ts ->
+  --   parens (pretty op <> nested' 2 ts)
   Let t (Scope [v] b) ->
     parens ("let" <+> pretty v <> body (pretty t) (pretty b))
   Let _ _ ->
     error "Let should bind only a single variable"
   Case t ps ->
-    parens ("case" <> body (pretty t) (pretty ps))
-  Panic -> "panic"
+    parens ("match" <> body (pretty t) (pretty ps))
+  Panic -> parens $ "error" <+> pretty (String @() "panic")
 
 variable :: (Var, Maybe Tp) -> Doc ann
 variable (v, Nothing) = pretty v
@@ -302,21 +307,27 @@ variables = parens . aligned' . fmap variable
 
 -- Fresh variable generation
 data FreshVar m a where
-  FreshVar :: Text -> FreshVar m Var
+  Fresh :: Text -> FreshVar m Text
 
 $(makeSem ''FreshVar)
+
+freshVar :: Member FreshVar r => Text -> Sem r Var
+freshVar t = fresh t <&> MkVar
+
+freshTag :: Member FreshVar r => Text -> Sem r Tag
+freshTag t = fresh t <&> MkTag
 
 runFreshVar :: Member (Embed IO) r => Sem (FreshVar ': r) a -> Sem r a
 runFreshVar sem = do
   ref <- embed $ newIORef (Map.empty :: Map Text Int)
   interpret
     ( \case
-        FreshVar t -> do
+        Fresh t -> do
           names <- embed $ readIORef ref
           let (n, m) = case Map.lookup t names of
                 Nothing -> (1, Map.insert t 1 names)
                 Just x -> (x + 1, Map.insert t (x + 1) names)
           embed $ writeIORef ref m
-          return (GenVar t n)
+          return (t <> pshow n)
     )
     sem

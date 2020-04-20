@@ -1,12 +1,10 @@
 module Defun.Labeled
   ( module Syntax,
     Abstract (..),
-    Act (..),
     Cont (..),
     ContPtr (..),
     Dbg (..),
     Env,
-    Label (..),
     Labeled,
     Store (..),
     Value (..),
@@ -21,14 +19,17 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Polysemy.Error
 import Polysemy.State
-import Pretty
-import Syntax hiding (Value (..), ValueF (..))
+import Util.Pretty
+import Pipeline.Scope (checkProgram)
+import Syntax hiding (ValueF (..))
+import Syntax.Term
 import Util
 
 data Abstract
   = Abstract
       { abstractProgram :: Program Label,
         abstractTerms :: Map Label Labeled,
+        abstractFvs :: Map Label Fvs,
         abstractInitEnv :: Env,
         abstractDataStore :: Store Value,
         abstractContStore :: Store Cont
@@ -36,14 +37,12 @@ data Abstract
 
 data Value
   = Closure Label Env [Var] Label
+  | Prim Var
   | TopLevel Var
   | Record Tag [ValuePtr]
   | Number
   | String
   | Boolean
-  deriving (Eq, Ord)
-
-data Act = AFun | APrim PrimOp Label | ARecord Tag Label
   deriving (Eq, Ord)
 
 data Cont
@@ -58,13 +57,9 @@ newtype ContPtr = ContPtr Label deriving (Eq, Ord, Pretty)
 newtype Store v = Store {unStore :: Map Label (Set v)}
   deriving (Eq, Ord)
 
-newtype Label = Label {unLabel :: Int} deriving (Eq, Ord, Pretty)
-
 type Env = Map Var ValuePtr
 
 type Labeled = TermF Label
-
-type Effs r = Members '[State Label, State (Map Label Labeled)] r
 
 data Dbg = Dbg Label (TermF Dbg)
 
@@ -80,13 +75,6 @@ nextLabel = do
   lbl@(Label x) <- get
   put (Label (x + 1))
   return lbl
-
-label :: Effs r => Term -> Sem r Label
-label (Term _ t) = do
-  lbl <- nextLabel
-  t' <- traverse label t
-  modify (Map.insert lbl t')
-  pure lbl
 
 fromSource :: Members '[Error Err] r => Program Term -> Sem r Abstract
 fromSource = evalState (Label 0) . fromSource'
@@ -104,7 +92,16 @@ absType env tp = case tp of
 fromSource' ::
   Members '[Error Err, State Label] r => Program Term -> Sem r Abstract
 fromSource' pgm = do
-  (abstractTerms, abstractProgram) <- runState Map.empty . traverse label $ pgm
+  let unwrap t = pure (unTerm t, Nothing)
+      wrap _ fvs new = do
+        lbl <- nextLabel
+        modify (Map.insert lbl new)
+        modify (Map.insert lbl fvs)
+        pure lbl
+  (abstractTerms, (abstractFvs, abstractProgram)) <-
+    runState (Map.empty @Label @(TermF Label))
+      . runState (Map.empty @Label @Fvs)
+      $ checkProgram unwrap wrap pgm
   let Program {..} = abstractProgram
   pgmDtps <- traverse (const nextLabel) programDatatypes
   (abstractDataStore, env) <- runState (Store Map.empty) do
@@ -132,7 +129,8 @@ toDbg terms lbl = Dbg lbl (fmap (toDbg terms) (terms Map.! lbl))
 
 instance Pretty Value where
   pretty (Closure lbl _ _ _) = "closure" <+> pretty lbl
-  pretty (TopLevel x) = pretty x
+  pretty (TopLevel x) = parens $ "top-level" <+> pretty x
+  pretty (Prim op) = parens $ "prim-op" <+> pretty op
   pretty (Record c ts) = braces (pretty c <> (nested' 2 ts))
   pretty String = "string"
   pretty Number = "number"
@@ -141,7 +139,7 @@ instance Pretty Value where
 instance Pretty Cont where
   pretty (CLet v _ l k) = parens ("let" <+> pretty v <+> pretty l <+> pretty k)
   pretty Halt = "Halt"
-  
+
 instance Pretty Dbg where
   pretty (Dbg lbl t) = pretty lbl <> "#" <> pretty t
 

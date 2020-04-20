@@ -1,56 +1,50 @@
 module Parser
-  ( fromFile,
+  ( run,
   )
 where
 
 import qualified Data.Char as Char
-import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
-import Polysemy.Error hiding (try)
-import qualified ScopeCheck
-import Syntax hiding (mkTerm)
+import Syntax
+import Syntax.Source
 import Text.Megaparsec hiding (State (..))
 import Text.Megaparsec.Char hiding (space)
 import qualified Text.Megaparsec.Char.Lexer as L
 import Util
 
-fromFile :: Members '[Embed IO, Error Err] r => FilePath -> Sem r (Program Term)
-fromFile f = do
-  program <- readFile f
-  case runParser emb f program of
-    Left err -> throw . ParseError . Text.pack . errorBundlePretty $ err
-    Right (p, t, e) -> validateProgram t >>= ScopeCheck.fromSource
+run :: FilePath -> Text -> Either Err SrcProgram
+run fileName program = case runParser parseProgram fileName program of
+  Left err -> Left . ParseError . Text.pack . errorBundlePretty $ err
+  Right p -> Right p
 
 -- Parser
 
 begin :: Parser Text
-begin = string "; begin interpreter" <* takeWhileP Nothing (/= '\n') <* space
+begin = do
+  b <- string "; begin interpreter" <* takeWhileP Nothing (/= '\n') <* space
+  pure $ b <> "\n\n"
 
 end :: Parser Text
-end = string "; end interpreter" <* takeWhileP Nothing (/= '\n')
+end = do
+  e <- string "; end interpreter" <* takeWhileP Nothing (/= '\n')
+  pure $ "\n" <> e
 
-emb :: Parser (Text, [TopLevel], Text)
-emb = do
+parseProgram :: Parser SrcProgram
+parseProgram = do
   (cs, b) <- manyTill_ anySingle begin
-  let prologue = (Text.pack cs <> b)
-  (ts, e) <- manyTill_ parseTopLevel end
-  epilogue <- takeRest
-  pure (prologue, ts, e <> epilogue)
-
+  let srcPrologue = (Text.pack cs <> b)
+  (srcProgram, e) <- manyTill_ parseTopLevel end
+  srcEpilogue <- (e <>) <$> takeRest
+  pure (SrcProgram {..})
 
 type Parser a = Parsec Void Text a
 
-data TopLevel
-  = TDef Loc (Var, Def Term)
-  | TDecl Loc (Tp, [Tp])
-  | TTest TestCase
-
 tag :: Parser Tag
-tag = SrcTag <$> text
+tag = MkTag <$> text
 
 var :: Parser Var
-var = mkVar <$> ident
+var = MkVar <$> ident
 
 parseType :: Parser Tp
 parseType =
@@ -70,13 +64,14 @@ typed = fmap (,Nothing) var <|> brackets do
   tp <- parseType
   pure (v, Just tp)
 
-mkTerm :: Parser (TermF Term) -> Parser Term
+mkTerm :: Parser (TermF SrcTerm) -> Parser SrcTerm
 mkTerm p = do
   SourcePos _ row col <- getSourcePos
-  let loc = Loc (unPos row) (unPos col)
-  Term (Just loc) <$> p
+  let srcLoc = Loc (unPos row) (unPos col)
+  srcTerm <- p
+  pure $ SrcTerm {..}
 
-parseTerm :: Parser Term
+parseTerm :: Parser SrcTerm
 parseTerm = mkTerm (parens expr <|> cons <|> err <|> variable)
   where
     variable = Var <$> var
@@ -94,10 +89,10 @@ parseTerm = mkTerm (parens expr <|> cons <|> err <|> variable)
     case' = keyword "match" *> liftA2 Case parseTerm parsePatterns
     err = keyword "error" >> stringLiteral $> Panic
 
-parsePatterns :: Parser (Patterns Term)
+parsePatterns :: Parser (Patterns SrcTerm)
 parsePatterns = Patterns <$> many parseCase
 
-parseCase :: Parser (Pattern (), Scope Term)
+parseCase :: Parser (Pattern (), Scope SrcTerm)
 parseCase = parens $ do
   (p, xs) <- extractNames <$> pattern
   t <- parseTerm
@@ -114,10 +109,20 @@ parseCase = parens $ do
       v <- var
       pure $ PVar v (Just t)
 
+parseValue :: Parser v -> Parser (ValueF v)
+parseValue subTerm =
+  choice
+    [ Number <$> try numberLiteral,
+      String <$> stringLiteral,
+      Boolean True <$ keyword "#t",
+      Boolean False <$ keyword "#f",
+      braces (Record <$> tag <*> many subTerm)
+    ]
+
 annot :: Parser Annot
 annot = empty
 
-parseDef :: Parser (Var, Def Term)
+parseDef :: Parser (Var, Def SrcTerm)
 parseDef = do
   x <- keyword "def" >> var
   as <- Set.fromList <$> many annot
@@ -131,25 +136,6 @@ parseDecl = do
   tps <- many $ parseType
   pure (name, tps)
 
-parseValue :: Parser v -> Parser (ValueF v)
-parseValue subTerm =
-  choice
-    [ Number <$> try numberLiteral,
-      String <$> stringLiteral,
-      Boolean True <$ keyword "#t",
-      Boolean False <$ keyword "#f",
-      braces (Record <$> tag <*> many subTerm)
-    ]
-
-parseTestCase :: Parser TestCase
-parseTestCase = do
-  desc <- keyword "def-test" >> stringLiteral
-  inputs <- parens (many value)
-  output <- value
-  pure $ TestCase desc inputs output
-  where
-    value = Value <$> parseValue value
-
 parseTopLevel :: Parser TopLevel
 parseTopLevel = do
   SourcePos _ row col <- getSourcePos
@@ -157,36 +143,8 @@ parseTopLevel = do
   parens $
     choice
       [ TDecl loc <$> parseDecl,
-        TTest <$> parseTestCase,
         TDef loc <$> parseDef
       ]
-
-validateProgram ::
-  forall r. Member (Error Err) r => [TopLevel] -> Sem r (Program Term)
-validateProgram topLevels = do
-  (defs, types, tests, main) <- aux Map.empty Map.empty [] Nothing topLevels
-  pure $
-    Program
-      { programDefinitions = defs,
-        programDatatypes = types,
-        programTests = reverse tests,
-        programMain = main
-      }
-  where
-    aux defs types test main ts = case (main, ts) of
-      (Nothing, []) -> throw @Err @r (ModuleError "No main in file")
-      (Just m, []) -> pure (defs, types, test, m)
-      (Nothing, TDef _ (SrcVar "main", def) : ts') ->
-        aux defs types test (Just def) ts'
-      (Just _, TDef l (SrcVar "main", _) : _) ->
-        throw (ScopeError (Just l) "Redefinition of main")
-      (_, TDef l (v, def) : ts') -> case Map.lookup v defs of
-        Nothing -> aux (Map.insert v def defs) types test main ts'
-        Just _ -> throw (ScopeError (Just l) "Redefinition of a top-level function")
-      (_, TDecl l (n, d) : ts') -> case Map.lookup n types of
-        Nothing -> aux defs (Map.insert n d types) test main ts'
-        Just _ -> throw (ScopeError (Just l) "Redefinition of a data type")
-      (_, TTest t : ts') -> aux defs types (t : test) main ts'
 
 -- Lexer
 

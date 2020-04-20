@@ -1,18 +1,19 @@
-module Cps where
+module Pipeline.Cps (fromAnf) where
 
+import Pipeline.Anf
 import Syntax
-import Anf
+import Syntax.Term
 
 term :: TermF Term -> Sem r Term
-term = pure . mkTerm
+term = pure . Term
 
 toCps :: Member FreshVar r => Anf -> TermF Term -> Sem r Term
-toCps (Atom t) k = (\v -> mkTerm $ App (mkTerm k) [v]) <$> atomic t
+toCps (Atom t) k = (\v -> Term $ App (Term k) [v]) <$> atomic t
 toCps (Expr tm) k = case tm of
   App f ts -> do
     f' <- atomic' f
     ts' <- traverse atomic' ts
-    term $ App f' (ts' <> [mkTerm k])
+    term $ App f' (ts' <> [Term k])
   Let t (Scope [x] b) -> do
     b' <- toCps b k
     toCps t (Abs $ Scope [x] b')
@@ -20,11 +21,11 @@ toCps (Expr tm) k = case tm of
   Case (Atom t) ps -> do
     t' <- atomic t
     case k of
-      Var{} -> mkTerm . Case t' <$> traverse (flip toCps k) ps
+      Var {} -> Term . Case t' <$> traverse (flip toCps k) ps
       _ -> do
         k' <- freshVar "cont"
         ps' <- traverse (flip toCps (Var k')) ps
-        term $ Let (mkTerm k) (Scope [(k', Nothing)] (mkTerm $ Case t' ps'))
+        term $ Let (Term k) (Scope [(k', Nothing)] (Term $ Case t' ps'))
   Panic -> term Panic
   _ -> error "Unexpected term inside Expr"
 
@@ -34,8 +35,9 @@ atomic (Abs (Scope xs t)) = do
   k' <- freshVar "cont"
   t' <- toCps t (Var k')
   term . Abs $ Scope (xs <> [(k', Nothing)]) t'
-atomic (Cons r) = mkTerm . Cons <$> traverse atomic' r
-atomic (Prim op ts) = mkTerm . Prim op <$> traverse atomic' ts
+atomic (Cons r) = Term . Cons <$> traverse atomic' r
+atomic (App (Atom (Var v)) ts) =
+  Term . App (Term (Var v)) <$> traverse atomic' ts
 atomic _ = error "Unexpected term after Anf"
 
 atomic' :: Member FreshVar r => Anf -> Sem r Term
@@ -47,12 +49,12 @@ fromAnf Program {..} = do
   defs <- traverse aux (programDefinitions)
   main <- do
     a <- freshVar "x"
-    let k = Abs . Scope [(a, Nothing)] . mkTerm $ Var a
+    let k = Abs . Scope [(a, Nothing)] . Term $ Var a
     traverse (flip toCps k) (programMain)
-  pure $ Program { programDefinitions = defs, programMain = main, .. }
+  pure $ Program {programDefinitions = defs, programMain = main, ..}
   where
     aux :: Member FreshVar r => Def Anf -> Sem r (Def Term)
     aux (Def as (Scope xs t)) = do
-        k <- freshVar "cont"
-        t' <- toCps t (Var k)
-        pure (Def as (Scope (xs <> [(k, Nothing)]) t'))
+      k <- freshVar "cont"
+      t' <- toCps t (Var k)
+      pure (Def as (Scope (xs <> [(k, Nothing)]) t'))

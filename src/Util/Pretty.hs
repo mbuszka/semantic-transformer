@@ -1,4 +1,4 @@
-module Pretty
+module Util.Pretty
   ( aligned,
     aligned',
     body,

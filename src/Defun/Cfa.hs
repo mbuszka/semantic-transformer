@@ -1,10 +1,10 @@
 module Defun.Cfa
-  ( analyse,
+  ( Res (..),
+    analyse,
   )
 where
 
 import Control.Applicative ((<|>), empty)
-import Data.List (nub)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Defun.Labeled
@@ -12,13 +12,20 @@ import Polysemy.Error
 import Polysemy.NonDet
 import Polysemy.Reader
 import Polysemy.State
-import Pretty hiding (body)
-import Util
 import qualified Syntax as Stx
+import Syntax.Term
+import Util
+import Util.Pretty hiding (body)
 
 data Config
   = Eval Env Label ContPtr
   | Continue ValuePtr ContPtr
+  deriving (Eq, Ord)
+
+data Res
+  = RLambda Label
+  | RGlobal Var
+  | RPrim Var
   deriving (Eq, Ord)
 
 type Terms = Reader (Map Label Labeled)
@@ -65,7 +72,9 @@ lookup env var dst = case env Map.!? var of
   Just v -> copy v dst
   Nothing -> asks (Map.member var) >>= \case
     True -> insertV dst (TopLevel var)
-    False -> error $ "Unknown variable: " <> pshow var <> " at " <> pshow dst
+    False -> case Map.lookup var Stx.primOps of
+      Nothing -> error $ "Unknown variable: " <> pshow var <> " at " <> pshow dst
+      Just _ -> insertV dst (Prim var)
 
 aval :: Effs r => Env -> Label -> Sem r ValuePtr
 aval env lbl = term lbl >>= \case
@@ -75,7 +84,12 @@ aval env lbl = term lbl >>= \case
   Cons (Stx.Number _) -> insertV lbl Number
   Cons (Stx.String _) -> insertV lbl String
   Cons (Stx.Record c vs) -> insertV lbl . Record c =<< traverse (aval env) vs
-  Prim op vs -> insertV lbl =<< prim op =<< traverse (derefV <=< aval env) vs
+  App f vs -> do
+    op <- term f >>= \case
+      Var op -> pure op
+      _ -> error "term not in A-normal form"
+    vs' <- traverse (derefV <=< aval env) vs
+    insertV lbl =<< prim (Stx.primOps Map.! op) vs'
   _ -> error "term not in A-normal form"
 
 eval :: Effs r => Env -> Label -> ContPtr -> Sem r Config
@@ -148,7 +162,6 @@ matchAll env (p : ps) (v : vs) = do
   matchAll env' ps vs
 matchAll _ _ _ = empty
 
-
 apply :: Effs r => ValuePtr -> [ValuePtr] -> ContPtr -> Sem r Config
 apply f as k = derefV f >>= \case
   Closure _ env xs body ->
@@ -168,30 +181,25 @@ step (vStore, kStore, confs) = do
       oneOf confs >>= \case
         Eval env e k -> eval env e k
         Continue v k -> continue v k
-  pure (vStore', kStore', confs  `Set.union` Set.fromList cs)
+  pure (vStore', kStore', confs `Set.union` Set.fromList cs)
 
-format :: Map Label (Set Value) -> Map Label [Tag]
+format :: Map Label (Set Value) -> Map Label (Set Res)
 format = Map.fromList . fmap aux . Map.toList
   where
-    aux (lbl, vs) = (lbl, nub . (fmt =<<) . toList $ vs)
-    fmt (TopLevel x) = [TopTag x]
-    fmt (Closure (Label l) _ _ _) = [GenTag l]
+    aux (lbl, vs) = (lbl, Set.fromList . (fmt =<<) . toList $ vs)
+    fmt (TopLevel x) = [RGlobal x]
+    fmt (Closure l _ _ _) = [RLambda l]
+    fmt (Prim p) = [RPrim p]
     fmt _ = []
 
-analyse ::
-  Members '[Embed IO, Error Err] r => Program Term -> Sem r (Abstract, Map Label [Tag])
+type EffsA r = Members '[Embed IO, Error Err] r
+
+analyse :: EffsA r => Program Term -> Sem r (Abstract, Map Label (Set Res))
 analyse program = do
   abstract@(Abstract {..}) <- fromSource program
   let Program {..} = abstractProgram
   let go s n = do
         s' <- step s
-        -- let (Store vs, Store ks, cs) = s
-        -- let (Store vs', Store ks', cs') = s'
-        -- when (n `mod` 1000 == 0) do
-        --   pprint' $ "Step: " <> pretty n
-        --   pprint $ Store (Map.difference vs' vs)
-        --   pprint $ Store (Map.difference ks' ks)
-        --   pprint $ toList (Set.difference cs' cs)
         if s == s'
           then pure s
           else go s' (n + 1)

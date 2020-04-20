@@ -4,6 +4,13 @@
   (for-syntax syntax/parse
               racket/syntax))
 
+(provide def-data
+         def-struct
+         def
+         integer
+         string
+         boolean)
+
 (begin-for-syntax
   (define-syntax-class type
     #:attributes (tp contract struct-def)
@@ -18,7 +25,7 @@
              #:with contract #'(recursive-contract c-name #:flat)
              #:with (fields ...) (generate-temporaries #'(field.tp ...))
              #:with struct-def
-             #'((struct tp (fields ...))
+             #'((struct tp (fields ...) #:prefab)
                 (define c-name (struct/c tp field.contract ...)))
              ))
 
@@ -45,6 +52,12 @@
            contract-def ...
            )]))
 
+(define-syntax (def-struct stx)
+  (syntax-parse stx
+    [(_ name:id cnt:integer)
+     #:with (elems ...) (generate-temporaries (build-list (syntax->datum #'cnt) (lambda (_) #'name)))
+     #'(struct name (elems ...))]))
+
 (define-syntax (def stx)
   (syntax-parse stx
     [(_ name:id (arg:def-arg ...) body)
@@ -60,75 +73,3 @@
          (define-match-expander type (lambda (stx) (syntax-case stx () [(_ p) #'(? pred p)]))) ...)]))
 
 (define-base-types integer string boolean)
-
-; begin interpreter
-
-(def-data expr
-  string
-  integer
-  {lam string expr}
-  {app expr expr}
-  {let_ string expr expr}
-  {add expr expr})
-
-(def eval (env term)
-  (match term
-    ([string x] (env x))
-    ({lam x body}
-     (lambda (v) (eval (extend env x v) body)))
-    ({let_ x e b}
-     (eval env {app {lam x b} e}))
-    ({app f x} ((eval env f) (eval env x)))
-    ({add n m} (+ (eval env n) (eval env m)))
-    ([integer n] n)))
-
-(def extend (env k v)
-  (lambda (x)
-    (match (eq? x k)
-      (#t v)
-      (#f (env x)))))
-
-(def init (x) (error "empty environment"))
-
-(def main ([term expr])
-  (eval init term))
-
-; end interpreter
-
-(main 42)
-(main (app (lam "x" "x") 42))
-(main (let_ "foo" 42 "foo"))
-;(main '(not a program))
-
-; (def-test "number evaluates to number"
-;   (42)
-;   42)
-
-; (def-test "simple call"
-;   ({app {lam "x" "x"} 42})
-;   42)
-
-; (def-test "higher order call"
-;   ({app 
-;     {app
-;       {lam "f" {lam "x"
-;         {app "f" "x"}}}
-;       {lam "x" "x"}}
-;     42})
-;   42)
-
-; (def-test "let binding"
-;   ({let_ "id" {lam "x" "x"}
-;       {app "id" 42}})
-;   42)
-
-(main {let_ "zero" {lam "s" {lam "z" "z"}}
-       {let_ "succ" {lam "n" {lam "s" {lam "z" 
-                                           {app "s" {app {app "n" "s"} "z"}}}}}
-             {let_ "plus" {lam "n" {lam "m" {lam "s" {lam "z"
-                                                          {app {app "n" "s"} {app {app "m" "s"} "z"}}}}}}
-                   {let_ "plus1" {lam "n" {add "n" 1}}
-                         {let_ "one" {app "succ" "zero"}
-                               {let_ "two" {app {app "plus" "one"} "one"}
-                                     {app {app "two" "plus1"} 0}}}}}}})
- 

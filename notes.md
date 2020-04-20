@@ -33,6 +33,14 @@ Values:
   - Strings
   - Records with tags
 
-Surface syntax:
-  - Applicative style language with pattern matches
-  
+New approach: use racket as interpreter definition language:
+  - We can reuse the high level infrastructure:
+    + testing, repl, experimentation etc.
+  - The source file is split into three sections:
+    + prologue (with #lang, requires, provides etc.)
+    + the interpreter
+    + epilogue (optional) with tests and examples
+  - We can provide a macro for defining datatypes 
+    (generates structs and appropriate contracts)
+  - Possibly think about some interop (implemented as primitive functions)
+    with code using simple types (ints, strings, bools, defined datatypes)
