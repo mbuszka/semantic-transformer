@@ -20,11 +20,11 @@ check ::
   (t -> Sem r (TermF t, Maybe Loc)) ->
   (t -> Fvs -> TermF f -> Sem r f) ->
   Env ->
-  Def t ->
-  Sem r (Def f)
-check unwrap wrap env (Def {..}) = do
-  (_, s') <- runWriter (goS env defScope)
-  pure $ Def {defScope = s', ..}
+  DefFun t ->
+  Sem r (DefFun f)
+check unwrap wrap env (DefFun {..}) = do
+  (_, s') <- runWriter (goS env funScope)
+  pure $ DefFun {funScope = s', ..}
   where
     wrap' :: t -> Sem (Writer Fvs : r) (TermF f) -> Sem (Writer Fvs : r) f
     wrap' old new = do
@@ -70,8 +70,9 @@ checkProgram ::
   (t -> Fvs -> TermF f -> Sem r f) ->
   Program t ->
   Sem r (Program f)
-checkProgram unwrap wrap (Program {..}) = do
-  let env = (Global <$ programDefinitions) <> (PrimOp <$ primOps)
+checkProgram unwrap wrap Program {..} = do
+  let globals = Map.fromList $ programDefinitions <&> \f -> (funName f, Global)
+      env = globals <> (PrimOp <$ primOps)
   defs <- traverse (check unwrap wrap env) programDefinitions
   main <- check unwrap wrap env programMain
   pure $ Program {programDefinitions = defs, programMain = main, ..}

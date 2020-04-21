@@ -53,8 +53,8 @@ fromAnf Program {..} = do
     traverse (flip toCps k) (programMain)
   pure $ Program {programDefinitions = defs, programMain = main, ..}
   where
-    aux :: Member FreshVar r => Def Anf -> Sem r (Def Term)
-    aux (Def as (Scope xs t)) = do
+    aux :: Member FreshVar r => DefFun Anf -> Sem r (DefFun Term)
+    aux DefFun {funScope = Scope xs t, ..} = do
       k <- freshVar "cont"
       t' <- toCps t (Var k)
-      pure (Def as (Scope (xs <> [(k, Nothing)]) t'))
+      pure DefFun {funScope = Scope (xs <> [(k, Nothing)]) t', ..}

@@ -61,12 +61,6 @@ insertK lbl k = insert lbl k >> pure (ContPtr lbl)
 insertV :: Member (State (Store Value)) r => Label -> Value -> Sem r ValuePtr
 insertV lbl v = insert lbl v >> pure (ValuePtr lbl)
 
-copy :: Member (State (Store Value)) r => ValuePtr -> Label -> Sem r ValuePtr
-copy (ValuePtr src) dst = do
-  (Store values) <- get @(Store Value)
-  put . Store . Map.insertWith (<>) dst (values Map.! src) $ values
-  pure $ ValuePtr dst
-
 lookup :: Effs r => Env -> Var -> Label -> Sem r ValuePtr
 lookup env var dst = case env Map.!? var of
   Just v -> copy v dst
@@ -137,15 +131,13 @@ evalCase env vPtr (Patterns ps) k = do
 match :: Effs r => Env -> Pattern Var -> ValuePtr -> Sem r Env
 match env p vPtr = do
   case p of
-    PVar x Nothing -> pure $ Map.insert x vPtr env
+    PVar x -> pure $ Map.insert x vPtr env
     PWild -> pure env
-    PVar x (Just tp) -> do
+    PType tp x -> do
       v <- derefV vPtr
-      case (tp, v) of
-        (TInt, Number) -> pure $ Map.insert x vPtr env
-        (TStr, String) -> pure $ Map.insert x vPtr env
-        (TBool, Boolean) -> pure $ Map.insert x vPtr env
-        _ -> empty
+      if Map.lookup tp builtinTypes == Just v
+        then pure $ Map.insert x vPtr env
+        else empty
     PCons c -> do
       v <- derefV vPtr
       case (c, v) of
@@ -198,15 +190,17 @@ analyse :: EffsA r => Program Term -> Sem r (Abstract, Map Label (Set Res))
 analyse program = do
   abstract@(Abstract {..}) <- fromSource program
   let Program {..} = abstractProgram
+  let functions = 
+        Map.fromList $ programDefinitions <&> \DefFun {..} -> (funName, funScope)
   let go s n = do
         s' <- step s
         if s == s'
           then pure s
           else go s' (n + 1)
-      Def _ (Scope _ main) = programMain
+      DefFun {funScope=Scope _ main} = programMain
       conf = Set.singleton (Eval abstractInitEnv main (ContPtr main))
   (Store vStore, _, _) <-
-    runReader (fmap defScope (programDefinitions))
+    runReader functions
       . runReader abstractTerms
       $ go (abstractDataStore, abstractContStore, conf) (0 :: Int)
   -- pprint' $ pmap (fmap toList vStore)

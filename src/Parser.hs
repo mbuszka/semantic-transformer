@@ -40,29 +40,26 @@ parseProgram = do
 
 type Parser a = Parsec Void Text a
 
-tag :: Parser Tag
-tag = MkTag <$> text
+parseField :: Parser StructField
+parseField =
+  choice
+    [ FieldName <$> var,
+      FieldType <$> tp,
+      brackets $ FieldBoth <$> tp <*> var
+    ]
 
-var :: Parser Var
-var = MkVar <$> ident
+parseStruct :: Parser DefStruct
+parseStruct =
+  braces $ DefStruct <$> tp <*> many parseField
 
-parseType :: Parser Tp
-parseType =
-  record
-    <|> ( text <&> \case
-            "integer" -> TInt
-            "string" -> TStr
-            "boolean" -> TBool
-            t -> TData t
-        )
-  where
-    record = braces (liftA2 TRecord tag (many parseType))
+parseType :: Parser (Either Tp DefStruct)
+parseType = (Left <$> tp) <|> (Right <$> parseStruct)
 
 typed :: Parser (Var, Maybe Tp)
 typed = fmap (,Nothing) var <|> brackets do
+  t <- tp
   v <- var
-  tp <- parseType
-  pure (v, Just tp)
+  pure (v, Just t)
 
 mkTerm :: Parser (TermF SrcTerm) -> Parser SrcTerm
 mkTerm p = do
@@ -102,12 +99,9 @@ parseCase = parens $ do
       choice
         [ PWild <$ keyword "_",
           PCons <$> parseValue pattern,
-          v
+          PVar <$> var,
+          brackets $ PType <$> tp <*> var
         ]
-    v = (PVar <$> var <*> pure Nothing) <|> brackets do
-      t <- parseType
-      v <- var
-      pure $ PVar v (Just t)
 
 parseValue :: Parser v -> Parser (ValueF v)
 parseValue subTerm =
@@ -116,25 +110,25 @@ parseValue subTerm =
       String <$> stringLiteral,
       Boolean True <$ keyword "#t",
       Boolean False <$ keyword "#f",
-      braces (Record <$> tag <*> many subTerm)
+      braces (Record <$> tp <*> many subTerm)
     ]
 
 annot :: Parser Annot
 annot = empty
 
-parseDef :: Parser (Var, Def SrcTerm)
-parseDef = do
+parseFun :: Parser (DefFun SrcTerm)
+parseFun = do
   x <- keyword "def" >> var
   as <- Set.fromList <$> many annot
   xs <- parens (many typed)
   t <- parseTerm
-  pure (x, Def as (Scope xs t))
+  pure $ DefFun x as (Scope xs t)
 
-parseDecl :: Parser (Tp, [Tp])
-parseDecl = do
-  name <- keyword "def-data" >> parseType
+parseData :: Parser DefData
+parseData = do
+  name <- keyword "def-data" >> tp
   tps <- many $ parseType
-  pure (name, tps)
+  pure $ DefData name tps
 
 parseTopLevel :: Parser TopLevel
 parseTopLevel = do
@@ -142,8 +136,9 @@ parseTopLevel = do
   let loc = Loc (unPos row) (unPos col)
   parens $
     choice
-      [ TDecl loc <$> parseDecl,
-        TDef loc <$> parseDef
+      [ TData loc <$> parseData,
+        TFun loc <$> parseFun,
+        TStruct loc <$> (keyword "def-struct" >> parseStruct)
       ]
 
 -- Lexer
@@ -155,6 +150,7 @@ keywords =
       "match",
       "def",
       "def-data",
+      "def-struct",
       "error",
       "lambda",
       "let"
@@ -169,15 +165,19 @@ brackets = between (symbol "[") (symbol "]")
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
-ident :: Parser Text
-ident = mfilter (not . flip elem keywords) $ text
+var :: Parser Var
+var = MkVar <$> lexeme (mfilter (not . flip elem keywords) $ text)
+  where
+    text = Text.cons <$> satisfy identFirst <*> takeWhileP Nothing identRest
+
+tp :: Parser Tp
+tp = MkTp <$> lexeme text
+  where
+    text = Text.cons <$> satisfy Char.isAsciiUpper <*> takeWhileP Nothing identRest
 
 keyword :: Text -> Parser Text
 keyword s = lexeme $ try (string s <* notFollowedBy (satisfy identRest))
-
-text :: Parser Text
-text =
-  lexeme (Text.cons <$> satisfy identFirst <*> takeWhileP Nothing identRest)
+  
 
 stringLiteral :: Parser Text
 stringLiteral =

@@ -33,7 +33,6 @@ executable semt
     Pipeline.Structure
     Defun.Cfa
     Defun.Labeled
-    -- Eval
     Parser
     Prelude
     Syntax
@@ -89,7 +88,6 @@ executable semt
     -rtsopts
     -with-rtsopts=-N
     -Wall
-    -- -Wno-name-shadowing
     -fplugin=Polysemy.Plugin
     -flate-specialise
     -fspecialise-aggressively

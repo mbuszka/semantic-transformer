@@ -22,10 +22,10 @@ data Defun
       { defunTerms :: Map Label Labeled,
         defunApplys :: Map (Set Res) (Var, [Var]),
         defunFvs :: Map Label Fvs,
-        defunGlobals :: Map Var Tag,
-        defunPrimOps :: Map Var Tag,
+        defunGlobals :: Map Var Tp,
+        defunPrimOps :: Map Var Tp,
         defunAnalysis :: Map Label (Set Res),
-        defunLambdas :: Map Label (Tag, [Var], Scope Term)
+        defunLambdas :: Map Label (Tp, [Var], Scope Term)
       }
 
 $(makeFieldLabels ''Defun)
@@ -64,21 +64,20 @@ genStructs = do
   lambdas <- gets (toListOf $ #lambdas % folded)
   globals <- gets (toListOf $ #globals % folded)
   primOps <- gets (toListOf $ #primOps % folded)
-  let ls = lambdas <&> \case (name, fields, _) -> DefStruct name fields
+  let ls = lambdas <&> \case (name, fields, _) -> DefStruct name (fmap FieldName fields)
       xs = globals <> primOps <&> \tag -> DefStruct tag []
   pure $ ls <> xs
 
 genApplys ::
-  Members [FreshVar, State Defun, Error Err] r => Sem r (Map Var (Def Term))
+  Members [FreshVar, State Defun, Error Err] r => Sem r [DefFun Term]
 genApplys = do
   applys <- gets (view $ #applys)
-  defs <- for (Map.toList applys) \case
+  for (Map.toList applys) \case
     (cases, (name, f : vs)) -> do
       ps <- traverse (genBody vs) (toList cases)
       let b = Term $ Case (Term $ Var f) (Patterns ps)
-      pure (name, Def Set.empty (scope (f : vs) b))
+      pure $ DefFun name Set.empty (scope (f : vs) b)
     _ -> error "Uh oh"
-  pure $ Map.fromList defs
 
 genBody ::
   Members [FreshVar, State Defun, Error Err] r => [Var] -> Res -> Sem r (Pattern (), Scope Term)
@@ -92,73 +91,36 @@ genBody vs (RPrim v) = do
   pure $ (PCons $ Stx.Record tag [], scope [] $ Term (App (Term $ Var v) vs'))
 genBody vs (RLambda l) = do
   (tag, fvs, Scope xs b) <- getLambda l
-  let p = PCons $ Stx.Record tag (fvs $> PVar () Nothing)
+  let p = PCons $ Stx.Record tag (fvs $> PVar ())
       b' = scope fvs (rename (Map.fromList (fmap fst xs `zip` vs)) b)
   pure (p, b')
 
 getLambda ::
-  Members [State Defun, Error Err] r => Label -> Sem r (Tag, [Var], Scope Term)
+  Members [State Defun, Error Err] r => Label -> Sem r (Tp, [Var], Scope Term)
 getLambda label = gets (preview (#lambdas % ix label)) >>= \case
   Nothing -> error "No lambda"
   Just x -> pure x
-
--- fromTerm program = do
---   (pgm@Abstract {..}, analysis) <- analyse program
---   let Program {..} = abstractProgram
---   -- pprint' . pmap
---   --   . fmap (defScope . fmap (toDbg abstractTerms))
---   --   $ programDefinitions
---   (lambdas, (applys, (pgm, main))) <-
---     runOutputList
---       . runState Map.empty
---       . runReader pgm
---       . runReader analysis
---       . runReader (Map.keysSet $ programDefinitions)
---       $ do
---         ds <- traverse (traverse runDefun) $ programDefinitions
---         m' <- traverse runDefun $ programMain
---         pure (ds, m')
---   let lambdas' = Map.fromList lambdas
---   let genBody vs t = error ""
---       --   pure
---       --     ( PCons (Stx.Record t []),
---       --       Scope [] (Term . App (Term . Var $ v) $ fmap (Term . Var) vs)
---       --     )
---       -- genBody vs tag = do
---       --   let (fvs, (Scope xs b)) = lambdas' Map.! tag
---       --   let b' = foldl' sub b (fmap fst xs `zip` vs)
---       --   pure (PCons (Stx.Record tag (fmap (const (PVar () Nothing)) fvs)), scope fvs b')
---   let genApply (tags, (var, f : vs)) = do
---         ps <- traverse (genBody vs) . toList $ tags
---         let b = Term $ Case (Term . Var $ f) (Patterns ps)
---         pure $ (var, Def Set.empty (scope (f : vs) b))
---       genApply _ = throw (InternalError "Malformed analysis result")
---   newDefs <- traverse genApply . Map.toList $ applys
---   let defs = pgm `Map.union` Map.fromList newDefs
---   pure $ Program {programDefinitions = defs, programMain = main, ..}
---   where
---     sub t (x, y) = rename (Map.singleton x y) t
 
 getFvs :: Member (State Defun) r => Label -> Sem r Fvs
 getFvs label = gets (preview (#fvs % ix label)) >>= \case
   Nothing -> error "No free variable information"
   Just fvs -> pure fvs
 
-getPrim :: Members [FreshVar, State Defun] r => Var -> Sem r Tag
+getPrim :: Members [FreshVar, State Defun] r => Var -> Sem r Tp
 getPrim p = do
   gets (preview (#primOps % ix p)) >>= \case
     Just tag -> pure tag
     Nothing -> do
-      tag <- freshTag ("prim-" <> pshow p)
+      tag <- freshTag ("Prim-" <> pshow p)
       modify' (over #primOps $ Map.insert p tag)
       pure tag
 
-getGlobal :: Members [FreshVar, State Defun] r => Var -> Sem r Tag
+getGlobal :: Members [FreshVar, State Defun] r => Var -> Sem r Tp
 getGlobal v = do
   gets (preview (#globals % ix v)) >>= \case
     Just tag -> pure tag
     Nothing -> do
-      tag <- freshTag (pshow v)
+      tag <- freshTag . pshow . varToTp $ v
       modify' (over #globals $ Map.insert v tag)
       pure tag
 
@@ -181,7 +143,7 @@ transformL :: Members [FreshVar, State Defun] r => Label -> TermF Term -> Sem r 
 transformL label term = case term of
   Abs s -> do
     fvs <- getFvs label <&> Map.filter (==Local) <&> Map.keysSet <&> toList
-    tag <- freshTag "lambda"
+    tag <- freshTag "Lambda"
     modify' $ over #lambdas (Map.insert label (tag, fvs, s))
     pure $ Term (Cons (Stx.Record tag (fmap (Term . Var) fvs)))
   Var v -> do

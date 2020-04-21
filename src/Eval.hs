@@ -57,8 +57,8 @@
 
 -- tests :: Member (Embed IO) r => Program Term -> Sem r [(Text, TestResult)]
 -- tests Program {..} =
---   let defs = fmap (\case Def _ s -> s) programDefinitions
---       Def _ (Scope xs main) = programMain
+--   let defs = fmap (\case DefFun _ s -> s) programDefinitions
+--       DefFun _ (Scope xs main) = programMain
 --       evalTest (TestCase name inputs output) =
 --         (name,)
 --           <$> case fmap fst xs `zip'` fmap inject inputs of

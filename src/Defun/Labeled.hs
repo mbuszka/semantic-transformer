@@ -9,6 +9,8 @@ module Defun.Labeled
     Store (..),
     Value (..),
     ValuePtr (..),
+    builtinTypes,
+    copy,
     insert,
     fromSource,
     toDbg,
@@ -17,13 +19,13 @@ where
 
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+import Pipeline.Scope (checkProgram)
 import Polysemy.Error
 import Polysemy.State
-import Util.Pretty
-import Pipeline.Scope (checkProgram)
 import Syntax hiding (ValueF (..))
 import Syntax.Term
 import Util
+import Util.Pretty
 
 data Abstract
   = Abstract
@@ -39,7 +41,7 @@ data Value
   = Closure Label Env [Var] Label
   | Prim Var
   | TopLevel Var
-  | Record Tag [ValuePtr]
+  | Record Tp [ValuePtr]
   | Number
   | String
   | Boolean
@@ -50,7 +52,7 @@ data Cont
   | Halt
   deriving (Eq, Ord)
 
-newtype ValuePtr = ValuePtr Label deriving (Eq, Ord, Pretty)
+newtype ValuePtr = ValuePtr {unValuePtr :: Label} deriving (Eq, Ord, Pretty)
 
 newtype ContPtr = ContPtr Label deriving (Eq, Ord, Pretty)
 
@@ -70,6 +72,12 @@ insert' lbl v (Store vals) =
 insert :: (Member (State (Store v)) r, Ord v) => Label -> v -> Sem r ()
 insert lbl v = modify' (insert' lbl v)
 
+copy :: Member (State (Store Value)) r => ValuePtr -> Label -> Sem r ValuePtr
+copy (ValuePtr src) dst = do
+  (Store values) <- get @(Store Value)
+  put . Store . Map.insertWith (<>) dst (values Map.! src) $ values
+  pure $ ValuePtr dst
+
 nextLabel :: Member (State Label) r => Sem r Label
 nextLabel = do
   lbl@(Label x) <- get
@@ -81,16 +89,72 @@ fromSource = evalState (Label 0) . fromSource'
 
 type TEnv = Map Tp Label
 
-absType :: TEnv -> Tp -> Value
-absType env tp = case tp of
-  TInt -> Number
-  TStr -> String
-  TBool -> Boolean
-  TRecord c ts -> Record c . fmap (ValuePtr . (env Map.!)) $ ts
-  TData _ -> error "Cannot include another data type"
+builtinTypes :: Map Tp Value
+builtinTypes =
+  Map.fromList
+    [ (MkTp "Integer", Number),
+      (MkTp "String", String),
+      (MkTp "Boolean", Boolean)
+    ]
 
-fromSource' ::
-  Members '[Error Err, State Label] r => Program Term -> Sem r Abstract
+alloc :: Effs r => [Tp] -> Sem r TEnv
+alloc [] = pure Map.empty
+alloc (t : ts) = do
+  ts' <- alloc ts
+  l <- nextLabel
+  if Map.member t ts'
+    then throw $ ScopeError Nothing ("Multiple definitions of type: " <> pshow t)
+    else pure $ Map.insert t l ts'
+
+getTp :: Effs r => TEnv -> Tp -> Sem r ValuePtr
+getTp tps t = case Map.lookup t tps of
+  Just l -> pure $ ValuePtr l
+  Nothing -> throw $ ScopeError Nothing ("Reference to undefined type: " <> pshow t)
+
+type Effs r = Members '[Error Err, State Label] r
+
+type Effs' r = (Effs r, Member (State (Store Value)) r)
+
+buildStore :: Effs r => [DefData] -> [DefStruct] -> Sem r (Store Value, TEnv)
+buildStore datas structs = do
+  let aux DefData {..} = 
+        dataName : (dataTypes >>= (either (const []) (\s -> [structName s])))
+  tps <-
+    alloc $ MkTp "Any" : Map.keys builtinTypes <> (datas >>= aux) <> fmap structName structs
+  any <- getTp tps (MkTp "Any")
+  let runData :: Effs' r => DefData -> Sem r ()
+      runData DefData {..} = do
+        ValuePtr lbl <- getTp tps dataName
+        for_ dataTypes \case
+          Left t -> getTp tps t >>= flip copy lbl
+          Right s -> runStruct s >>= flip copy lbl
+      runStruct :: Effs' r => DefStruct -> Sem r ValuePtr
+      runStruct DefStruct {..} = do
+        ValuePtr lbl <- getTp tps structName
+        fields <- for structFields \case
+          FieldName _ -> pure any
+          FieldType t -> getTp tps t
+          FieldBoth t _ -> getTp tps t
+        insert lbl $ Record structName fields
+        pure (ValuePtr lbl)
+      step :: Effs' r => Sem r ()
+      step = do
+        for_ (Map.toList builtinTypes) \case
+          (tp, val) -> do
+            (ValuePtr l) <- getTp tps tp
+            insert l val
+        for_ datas runData
+        for_ structs runStruct
+        for_ (toList tps) \l -> do
+          copy (ValuePtr l) (unValuePtr any)
+
+      go :: Effs r => Store Value -> Sem r (Store Value)
+      go store = do
+        store' <- execState store step
+        if store == store' then pure store else go store'
+  (,tps) <$> go (Store Map.empty)
+
+fromSource' :: Effs r => Program Term -> Sem r Abstract
 fromSource' pgm = do
   let unwrap t = pure (unTerm t, Nothing)
       wrap _ fvs new = do
@@ -103,21 +167,8 @@ fromSource' pgm = do
       . runState (Map.empty @Label @Fvs)
       $ checkProgram unwrap wrap pgm
   let Program {..} = abstractProgram
-  pgmDtps <- traverse (const nextLabel) programDatatypes
-  (abstractDataStore, env) <- runState (Store Map.empty) do
-    baseValues <- for [(TStr, String), (TInt, Number), (TBool, Boolean)] \case
-      (name, value) -> do
-        lbl <- nextLabel
-        insert lbl value
-        pure (name, lbl)
-    let env = Map.union (Map.fromList baseValues) pgmDtps
-    for_ (Map.toList programDatatypes) \case
-      (name, types) -> do
-        let vals = fmap (absType env) types
-            lbl = env Map.! name
-        traverse_ (insert lbl) vals
-    pure env
-  let Def _ (Scope xs main) = programMain
+  (abstractDataStore, env) <- buildStore programDatatypes programStructs
+  let DefFun {funScope = Scope xs main} = programMain
   let abstractContStore = Store (Map.singleton main (Set.singleton Halt))
   let aux (_, Nothing) = throw (ModuleError "Missing type annotation in main")
       aux (x, Just t) = pure (x, ValuePtr (env Map.! t))
@@ -144,4 +195,4 @@ instance Pretty Dbg where
   pretty (Dbg lbl t) = pretty lbl <> "#" <> pretty t
 
 instance Pretty v => Pretty (Store v) where
-  pretty (Store vs) = pmap . fmap toList $ vs
+  pretty (Store vs) = prettyMap . fmap toList $ vs

@@ -10,8 +10,9 @@ data SrcTerm =
       }
 
 data TopLevel
-  = TDef Loc (Var, Def SrcTerm)
-  | TDecl Loc (Tp, [Tp])
+  = TFun Loc (DefFun SrcTerm)
+  | TData Loc DefData
+  | TStruct Loc DefStruct
 
 data SrcProgram =
   SrcProgram

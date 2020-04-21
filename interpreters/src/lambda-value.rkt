@@ -7,21 +7,21 @@
 
 ; begin interpreter
 
-(def-data expr
-  string                  ;; variable
-  integer                 ;; number
-  {lam string expr}       ;; lambda abstraction
-  {app expr expr}         ;; application
-  {add expr expr})        ;; addition on numbers
+(def-data Term
+  String                  ;; variable
+  Integer                 ;; number
+  {Lam String Term}       ;; lambda abstraction
+  {App Term Term}         ;; application
+  {Add Term Term})        ;; addition on numbers
 
-(def eval (env term)
+(def eval (env [Term term])
   (match term
-    ([string x] (env x))
-    ([integer n] n)
-    ({lam x body}
+    ([String x] (env x))
+    ([Integer n] n)
+    ({Lam x body}
      (lambda (v) (eval (extend env x v) body)))
-    ({app f x} ((eval env f) (eval env x)))
-    ({add n m} (+ (eval env n) (eval env m)))
+    ({App f x} ((eval env f) (eval env x)))
+    ({Add n m} (+ (eval env n) (eval env m)))
     ))
 
 (def extend (env k v)
@@ -32,7 +32,7 @@
 
 (def init (x) (error "empty environment"))
 
-(def main ([term expr])
+(def main ([Term term])
   (eval init term))
 
 ; end interpreter
@@ -40,24 +40,24 @@
 (module+ test
   (require rackunit)
   (check-equal? (main 42) 42)
-  (check-equal? (main (app (lam "x" "x") 42)) 42)
+  (check-equal? (main (App (Lam "x" "x") 42)) 42)
   
   (define-syntax (lam* stx)
     (syntax-parse stx
-      [(_ (v) body) #'(lam v body)]
-      [(_ (v vs ...+) body) #'(lam v (lam* (vs ...) body))]))
+      [(_ (v) body) #'(Lam v body)]
+      [(_ (v vs ...+) body) #'(Lam v (lam* (vs ...) body))]))
 
   (define-syntax (app* stx)
     (syntax-parse stx
-      [(_ f v) #'(app f v)]
-      [(_ f v vs ...+) #'(app* (app f v) vs ...)]))
+      [(_ f v) #'(App f v)]
+      [(_ f v vs ...+) #'(app* (App f v) vs ...)]))
 
   (let*
     ([zero (lam* ("s" "z") "z")]
-     [succ (lam* ("n" "s" "z") {app "s" (app* "n" "s" "z")})]
-     [two {app succ {app succ zero}}]
+     [succ (lam* ("n" "s" "z") {App "s" (app* "n" "s" "z")})]
+     [two {App succ {App succ zero}}]
      [plus (lam*  ("n" "m" "s" "z") (app* "n" "s" (app* "m" "s" "z")))]
-     [pgm (app* plus two two {lam "n" {add "n" 1}} 0)])
+     [pgm (app* plus two two {Lam "n" {Add "n" 1}} 0)])
     (check-equal? (main pgm) 4))
 )
  

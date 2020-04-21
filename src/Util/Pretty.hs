@@ -1,9 +1,10 @@
 module Util.Pretty
   ( aligned,
     aligned',
-    body,
     nested,
     nested',
+    prettyBody,
+    prettyMap,
     rows,
     -- reexports
     (<+>),
@@ -12,7 +13,6 @@ module Util.Pretty
     escape,
     hardline,
     parens,
-    pmap,
   )
 where
 
@@ -23,8 +23,8 @@ import Data.Text.Prettyprint.Doc
 rows :: [Doc ann] -> Doc ann
 rows = concatWith (\x y -> x <> hardline <> y)
 
-body :: Doc ann -> Doc ann -> Doc ann
-body params rest = group $ flatAlt normal compact
+prettyBody :: Doc ann -> Doc ann -> Doc ann
+prettyBody params rest = group $ flatAlt normal compact
   where
     normal = nested 4 params <> nest 2 (hardline <> rest)
     compact = space <> params <+> rest
@@ -45,8 +45,8 @@ aligned' = align . sep
 escape :: Text -> Doc ann
 escape = pretty . show . Text.unpack
 
-pmap :: (Pretty k, Pretty v) => Map k v -> Doc ann
-pmap =
+prettyMap :: (Pretty k, Pretty v) => Map k v -> Doc ann
+prettyMap =
   aligned'
     . fmap (\case (l, t) -> pretty l <+> "->" <+> pretty t)
     . Map.toList
