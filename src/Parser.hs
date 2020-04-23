@@ -69,11 +69,11 @@ mkTerm p = do
   pure $ SrcTerm {..}
 
 parseTerm :: Parser SrcTerm
-parseTerm = mkTerm (parens expr <|> cons <|> err <|> variable)
+parseTerm = mkTerm (parens expr <|> cons <|> variable)
   where
     variable = Var <$> var
     cons = Cons <$> parseValue parseTerm
-    expr = choice [lam, let', case', app]
+    expr = choice [lam, let', case', err, app]
     lam = keyword "lambda" >> do
       xs <- parens (many typed)
       Abs . Scope xs <$> parseTerm
@@ -114,7 +114,7 @@ parseValue subTerm =
     ]
 
 annot :: Parser Annot
-annot = empty
+annot = keyword "#:atomic" >> pure Atomic
 
 parseFun :: Parser (DefFun SrcTerm)
 parseFun = do

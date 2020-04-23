@@ -85,7 +85,7 @@
 
 (define-syntax (def stx)
   (syntax-parse stx
-    [(_ name:id (arg:def-arg ...) body)
+    [(_ name:id _:keyword ... (arg:def-arg ...) body)
      #:with contract #'(-> arg.contract ... any/c)
      #'(begin
          (define/contract (name arg.name ...) contract body))]))

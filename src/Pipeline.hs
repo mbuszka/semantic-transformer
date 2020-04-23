@@ -13,35 +13,44 @@ import qualified Pipeline.Cps as Cps
 import qualified Pipeline.Defun as Defun
 import qualified Syntax.Source as Source
 import qualified Syntax.Scoped as Scoped
+import System.FilePath
 
 data Config
   = Config
       { configSource :: FilePath,
-        configOutput :: FilePath
+        configOutput :: FilePath,
+        configDumpDir :: FilePath,
+        configDumpAnf :: Bool,
+        configDumpCps :: Bool
       }
 
 run :: Config -> IO ()
-run Config {..} = do
+run config = do
   res <-
     runFinal
       . embedToFinal
       . errorToIOFinal
       . runFreshVar
-      $ test configSource configOutput
+      $ runEffs config
   case res of
     Left err -> pprint err
     Right () -> pure ()
 
-test ::
-  Members '[Embed IO, FreshVar, Error Err] r => FilePath -> FilePath -> Sem r ()
-test file output = do
-  txt <- embed $ TIO.readFile file
-  SrcProgram {..} <- fromEither $ Parser.run file txt
-  -- srcProgram `seq` putTextLn "Parsed source"
+runEffs :: Members '[Embed IO, FreshVar, Error Err] r => Config -> Sem r ()
+runEffs Config {..} = do
+  txt <- embed $ TIO.readFile configSource
+  SrcProgram {..} <- fromEither $ Parser.run configSource txt
+  let srcName = takeBaseName configSource
   validated <- Structure.validate srcProgram
   scoped <- Scope.checkProgram Source.unwrap Scoped.fromSource validated
   anf <- Anf.transform scoped
+  when configDumpAnf do
+    let anfFile = configDumpDir </> srcName <> "-anf" <.> "rkt"
+    embed $ TIO.writeFile anfFile (srcPrologue <> pshow anf <> srcEpilogue)
   cps <- Cps.fromAnf anf
+  when configDumpCps do
+    let cpsFile = configDumpDir </> srcName <> "-cps" <.> "rkt"
+    embed $ TIO.writeFile cpsFile (srcPrologue <> pshow cps <> srcEpilogue)
   def <- Defun.transform cps
-  embed $ TIO.writeFile output (srcPrologue <> pshow def <> srcEpilogue)
+  embed $ TIO.writeFile configOutput (srcPrologue <> pshow def <> srcEpilogue)
   pure ()

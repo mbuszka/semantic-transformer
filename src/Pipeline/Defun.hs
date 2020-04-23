@@ -149,7 +149,7 @@ transformL label term = case term of
   Var v -> do
     fvs <- getFvs label
     case fvs Map.! v of
-      Stx.Global -> do
+      Stx.Global _ -> do
         tag <- getGlobal v
         pure . Term . Cons $ Stx.Record tag []
       Stx.PrimOp -> do

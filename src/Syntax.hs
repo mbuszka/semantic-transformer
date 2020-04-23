@@ -65,14 +65,14 @@ data DefStruct = DefStruct {structName :: Tp, structFields :: [StructField]}
 data StructField = FieldName Var | FieldType Tp | FieldBoth Tp Var
 
 data Annot
-  = NoCps
+  = Atomic
   deriving (Eq, Ord)
 
 data PrimOp = Add | Sub | Mul | Div | Neg | And | Or | Not | Eq
   deriving (Eq, Ord)
 
 data Target
-  = Global
+  = Global (Set Annot)
   | Local
   | PrimOp
   deriving (Eq, Ord)
@@ -220,7 +220,7 @@ instance Pretty t => Pretty (TermF t) where
   pretty = prettyTerm
 
 instance Pretty Annot where
-  pretty NoCps = "@no-cps"
+  pretty Atomic = "#:atomic"
 
 instance Pretty t => Pretty (Program t) where
   pretty Program {..} =
@@ -281,11 +281,11 @@ prettyTerm term = case term of
   Var v -> pretty v
   Cons v -> pretty v
   Abs (Scope vs t) ->
-    parens ("fun" <> prettyBody (variables vs) (pretty t))
+    parens ("lambda" <> prettyBody (variables vs) (pretty t))
   App f ts ->
     parens (pretty f <> nested' 2 ts)
   Let t (Scope [v] b) ->
-    parens ("let" <+> pretty v <> prettyBody (pretty t) (pretty b))
+    parens ("let" <+> variable v <> prettyBody (pretty t) (pretty b))
   Let _ _ ->
     error "Let should bind only a single variable"
   Case t ps ->

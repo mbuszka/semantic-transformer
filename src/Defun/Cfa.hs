@@ -34,7 +34,7 @@ type TopLevels = Reader (Map Var (Scope Label))
 
 type Effs r =
   Members
-    '[Terms, TopLevels, State (Store Cont), State (Store Value), NonDet]
+    '[Terms, TopLevels, State (Store Cont), State (Store Value), NonDet, Error Err]
     r
 
 term :: Effs r => Label -> Sem r (TermF Label)
@@ -46,14 +46,14 @@ oneOf :: (Foldable t, Member NonDet r) => t a -> Sem r a
 oneOf = foldr (<|>) empty . fmap pure . toList
 
 derefK :: Effs r => ContPtr -> Sem r Cont
-derefK (ContPtr p) = do
-  Store xs <- get
-  oneOf (xs Map.! p)
+derefK (ContPtr p) = gets (Map.lookup p . unStore) >>= \case
+  Just vs -> oneOf vs
+  Nothing -> throw $ InternalError $ "Cont not found: " <> pshow p
 
 derefV :: Effs r => ValuePtr -> Sem r Value
-derefV (ValuePtr p) = do
-  Store xs <- get
-  oneOf (xs Map.! p)
+derefV (ValuePtr p) = gets (Map.lookup p . unStore) >>= \case
+  Just vs -> oneOf vs
+  Nothing -> throw $ InternalError $ "Value not found: " <> pshow p
 
 insertK :: Member (State (Store Cont)) r => Label -> Cont -> Sem r ContPtr
 insertK lbl k = insert lbl k >> pure (ContPtr lbl)
@@ -164,7 +164,7 @@ apply f as k = derefV f >>= \case
   _ -> empty
 
 step ::
-  Members '[Terms, TopLevels] r =>
+  Members '[Terms, TopLevels, Error Err] r =>
   (Store Value, Store Cont, Set Config) ->
   Sem r (Store Value, Store Cont, Set Config)
 step (vStore, kStore, confs) = do

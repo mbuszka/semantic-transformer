@@ -71,7 +71,10 @@ checkProgram ::
   Program t ->
   Sem r (Program f)
 checkProgram unwrap wrap Program {..} = do
-  let globals = Map.fromList $ programDefinitions <&> \f -> (funName f, Global)
+  let globals = 
+        Map.fromList 
+        $ programDefinitions
+        <&> \DefFun {..} -> (funName, Global funAnnotations)
       env = globals <> (PrimOp <$ primOps)
   defs <- traverse (check unwrap wrap env) programDefinitions
   main <- check unwrap wrap env programMain
