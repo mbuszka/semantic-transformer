@@ -24,13 +24,13 @@
     ({Add n m} (+ (eval env n) (eval env m)))
     ))
 
-(def extend (env k v)
-  (lambda (x)
+(def extend #:atomic (env k v)
+  (lambda #:atomic (x)
     (match (eq? x k)
       (#t v)
       (#f (env x)))))
 
-(def init (x) (error "empty environment"))
+(def init #:atomic (x) (error "empty environment"))
 
 (def main ([Term term])
   (eval init term))

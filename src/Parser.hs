@@ -75,13 +75,14 @@ parseTerm = mkTerm (parens expr <|> cons <|> variable)
     cons = Cons <$> parseValue parseTerm
     expr = choice [lam, let', case', err, app]
     lam = keyword "lambda" >> do
+      as <- Set.fromList <$> many annot
       xs <- parens (many typed)
-      Abs . Scope xs <$> parseTerm
+      Abs (transformAnnots as) . Scope xs <$> parseTerm
     let' = keyword "let" >> do
-      v <- typed
+      x <- var
       lhs <- parseTerm
       rhs <- parseTerm
-      pure $ Let lhs (Scope [v] rhs)
+      pure $ Let (LetAnnot { letGenerated = False}) x lhs rhs
     app = liftA2 App parseTerm (many parseTerm)
     case' = keyword "match" *> liftA2 Case parseTerm parsePatterns
     err = keyword "error" >> stringLiteral $> Panic
@@ -122,7 +123,10 @@ parseFun = do
   as <- Set.fromList <$> many annot
   xs <- parens (many typed)
   t <- parseTerm
-  pure $ DefFun x as (Scope xs t)
+  pure $ DefFun x (transformAnnots as) (Scope xs t)
+
+transformAnnots :: Set Annot -> FunAnnot
+transformAnnots as = FunAnnot {funAtomic = Set.member Atomic as}
 
 parseData :: Parser DefData
 parseData = do

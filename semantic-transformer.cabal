@@ -25,14 +25,17 @@ source-repository head
 executable semt
   main-is:             Main.hs
   other-modules:
+    AbsInt
+    AbsInt.Interpreter
+    AbsInt.Runner
+    AbsInt.Types
     Pipeline
     Pipeline.Anf
     Pipeline.Cps
     Pipeline.Defun
+    Pipeline.Inline
     Pipeline.Scope
     Pipeline.Structure
-    Defun.Cfa
-    Defun.Labeled
     Parser
     Prelude
     Syntax

@@ -1,6 +1,7 @@
 module Pipeline.Scope
   ( check,
     checkProgram,
+    fromSource,
   )
 where
 
@@ -9,8 +10,9 @@ import Polysemy.Error
 import Polysemy.Writer
 import Syntax
 import Util
+import qualified Syntax.Source as Source
 
-type Env = Map Var Target
+type Env = Map Var RefersTo
 
 type Eff r = Member (Error Err) r
 
@@ -39,14 +41,15 @@ check unwrap wrap env (DefFun {..}) = do
           wrap' term do
             tell $ Map.singleton v (env Map.! v)
             pure (Var v)
-        Abs s -> do
-          wrap' term $ Abs <$> goS env s
+        Abs a s -> do
+          wrap' term $ Abs a <$> goS env s
         App f xs -> do
           wrap' term do
             App <$> go env f <*> traverse (go env) xs
-        Let e s -> do
+        Let a x e s -> do
           wrap' term do
-            Let <$> go env e <*> goS env s
+            s' <- goS env (scope [x] s)
+            Let a x <$> go env e <*> pure (scopeBody s')
         Case e ps -> do
           wrap' term do
             Case <$> go env e <*> goP env ps
@@ -54,7 +57,7 @@ check unwrap wrap env (DefFun {..}) = do
           wrap' term $ traverse (go env) t
     goS :: Env -> Scope t -> Sem (Writer Fvs : r) (Scope f)
     goS env s = do
-      let defined = Map.fromList $ fmap (,Local) (scopeVars s)
+      let defined = Map.fromList $ fmap (,RefLocal) (scopeVars s)
       body <- censor (`Map.difference` defined) $ go (defined <> env) (scopeBody s)
       pure $ s $> body
     goP :: Env -> Patterns t -> Sem (Writer Fvs : r) (Patterns f)
@@ -74,8 +77,15 @@ checkProgram unwrap wrap Program {..} = do
   let globals = 
         Map.fromList 
         $ programDefinitions
-        <&> \DefFun {..} -> (funName, Global funAnnotations)
-      env = globals <> (PrimOp <$ primOps)
+        <&> \DefFun {..} -> (funName, RefGlobal)
+      env = globals <> (RefPrimOp <$ primOps)
   defs <- traverse (check unwrap wrap env) programDefinitions
   main <- check unwrap wrap env programMain
   pure $ Program {programDefinitions = defs, programMain = main, ..}
+
+fromSource ::
+  forall r. Members '[Error Err, FreshLabel] r => Program Source.SrcTerm -> Sem r (Program Term)
+fromSource pgm = do
+  let unwrap = Source.unwrap
+      wrap _ _ t = Term t <$> freshLabel @r
+  checkProgram unwrap wrap pgm

@@ -4,31 +4,40 @@ module Syntax
     DefData (..),
     DefFun (..),
     DefStruct (..),
+    FreshLabel,
     FreshVar,
+    FunAnnot (..),
     Fvs,
     Label (..),
+    LetAnnot (..),
     Pattern (..),
     Patterns (..),
     PrimOp (..),
-    Pretty (..),
     Program (..),
+    RefersTo (..),
     Scope (..),
     StructField (..),
-    Target (..),
     TermF (..),
+    Term (..),
     Tp (..),
     ValueF (..),
     Var (..),
     extractNames,
+    freshLabel,
     freshTag,
     freshVar,
     mkVar,
     insertNames,
+    primOpNames,
     primOps,
+    programScopes,
+    programTerms,
+    runFreshLabel,
     runFreshVar,
     scope,
     scopeBody,
     scopeVars,
+    term,
     tpToVar,
     varToTp,
   )
@@ -53,7 +62,7 @@ data Program t
 data DefFun t
   = DefFun
       { funName :: Var,
-        funAnnotations :: Set Annot,
+        funAnnot :: FunAnnot,
         funScope :: Scope t
       }
   deriving (Functor, Foldable, Traversable)
@@ -68,28 +77,36 @@ data Annot
   = Atomic
   deriving (Eq, Ord)
 
-data PrimOp = Add | Sub | Mul | Div | Neg | And | Or | Not | Eq
-  deriving (Eq, Ord)
+data FunAnnot
+  = FunAnnot
+      { funAtomic :: Bool
+      }
 
-data Target
-  = Global (Set Annot)
-  | Local
-  | PrimOp
+data LetAnnot
+  = LetAnnot
+      { letGenerated :: Bool
+      }
+
+data PrimOp = Add | Sub | Mul | Div | Neg | And | Or | Not | Eq
   deriving (Eq, Ord)
 
 newtype Label = Label {unLabel :: Int} deriving (Eq, Ord, Pretty)
 
-type Fvs = Map Var Target
+type Fvs = Map Var RefersTo
+
+data RefersTo = RefGlobal | RefPrimOp | RefLocal deriving (Eq, Ord)
 
 data TermF t
   = Var Var
-  | Abs (Scope t)
+  | Abs FunAnnot (Scope t)
   | App t [t]
-  | Let t (Scope t)
+  | Let LetAnnot Var t t
   | Case t (Patterns t)
   | Cons (ValueF t)
   | Panic
   deriving (Functor, Foldable, Traversable)
+
+data Term = Term {termTerm :: TermF Term, termLabel :: Label}
 
 data Pattern v
   = PVar v
@@ -121,10 +138,14 @@ data ValueF t
 class Bound t where
   freeVars :: t -> Set Var
 
+  allVars :: t -> Set Var
+
   rename :: Map Var Var -> t -> t
 
 instance Bound t => Bound (Scope t) where
   freeVars (Scope vs t) = freeVars t Set.\\ (Set.fromList . fmap fst $ vs)
+
+  allVars (Scope vs t) = allVars t <> (Set.fromList . fmap fst $ vs)
 
   rename vars (Scope vs t) =
     let bound = Set.fromList (fmap fst vs)
@@ -136,29 +157,45 @@ instance Bound t => Bound (Scope t) where
 instance Bound t => Bound (TermF t) where
   freeVars term = case term of
     Var v -> Set.singleton v
-    Abs s -> freeVars s
-    Let t s -> freeVars t `Set.union` freeVars s
+    Abs _ s -> freeVars s
+    Let _ x t s -> freeVars t <> (Set.delete x $ freeVars s)
     Case t ps -> freeVars t `Set.union` freeVars ps
     _ -> foldMap freeVars term
 
+  allVars term = case term of
+    Var v -> Set.singleton v
+    Abs _ s -> allVars s
+    Let _ x t s -> Set.singleton x <> allVars t <> allVars s
+    Case t ps -> allVars t <> allVars ps
+    _ -> foldMap allVars term
+
   rename vars term = case term of
     Var v -> Var $ Map.findWithDefault v v vars
-    Abs s -> Abs $ rename vars s
-    Let t s -> Let (rename vars t) (rename vars s)
+    Abs a s -> Abs a $ rename vars s
+    Let a x t s -> Let a x (rename vars t) (rename (Map.delete x vars) s)
     Case t ps -> Case (rename vars t) (rename vars ps)
     _ -> fmap (rename vars) term
 
 instance Bound v => Bound (ValueF v) where
-  freeVars (Record _ ts) = foldMap freeVars ts
-  freeVars _ = Set.empty
+  freeVars = foldMap freeVars
 
-  rename vars (Record c ts) = Record c (fmap (rename vars) ts)
-  rename _ v = v
+  allVars = foldMap allVars
+
+  rename vars = fmap (rename vars)
 
 instance Bound t => Bound (Patterns t) where
   freeVars (Patterns ps) = foldMap (freeVars . snd) ps
 
+  allVars (Patterns ps) = foldMap (allVars . snd) ps
+
   rename vars (Patterns ps) = Patterns (fmap (fmap (rename vars)) ps)
+
+instance Bound Term where
+  freeVars Term {..} = freeVars termTerm
+
+  allVars Term {..} = allVars termTerm
+
+  rename vars Term {..} = Term {termTerm = rename vars termTerm, ..}
 
 -- Pattern helpers
 extractNames :: Pattern Var -> (Pattern (), [Var])
@@ -178,7 +215,7 @@ insertNames pattern vars = case go pattern vars of
 mkVar :: Text -> Var
 mkVar = MkVar
 
--- Smart constructors
+-- Other helpers
 scope :: [Var] -> t -> Scope t
 scope vs = Scope (fmap (,Nothing) vs)
 
@@ -194,6 +231,15 @@ varToTp (MkVar v) = MkTp (Text.toTitle v)
 tpToVar :: Tp -> Var
 tpToVar (MkTp t) = MkVar (Text.toLower t)
 
+programScopes :: Program t -> Map Var (Scope t)
+programScopes Program {..} =
+  Map.fromList $ programDefinitions <&> \DefFun {..} -> (funName, funScope)
+
+programTerms :: Program Term -> Map Label Term
+programTerms = foldMap aux
+  where
+    aux term@Term {..} = Map.insert termLabel term $ foldMap aux termTerm
+
 primOps :: Map Var PrimOp
 primOps =
   Map.fromList
@@ -208,7 +254,13 @@ primOps =
       (MkVar "eq?", Eq)
     ]
 
+primOpNames :: Map PrimOp Var
+primOpNames = Map.fromList $ fmap swap $ Map.toList primOps
+
 -- Pretty printing
+
+instance Pretty Term where
+  pretty Term {..} = {- pretty termLabel <> "#" <> -} pretty termTerm
 
 instance Pretty (Pattern Var) where
   pretty (PVar v) = pretty v
@@ -280,14 +332,12 @@ prettyTerm :: Pretty t => TermF t -> Doc ann
 prettyTerm term = case term of
   Var v -> pretty v
   Cons v -> pretty v
-  Abs (Scope vs t) ->
+  Abs _ (Scope vs t) ->
     parens ("lambda" <> prettyBody (variables vs) (pretty t))
   App f ts ->
     parens (pretty f <> nested' 2 ts)
-  Let t (Scope [v] b) ->
-    parens ("let" <+> variable v <> prettyBody (pretty t) (pretty b))
-  Let _ _ ->
-    error "Let should bind only a single variable"
+  Let _ x t b ->
+    parens ("let" <+> pretty x <> prettyBody (pretty t) (pretty b))
   Case t ps ->
     parens ("match" <> prettyBody (pretty t) (pretty ps))
   Panic -> parens $ "error" <+> pretty (String @() "panic")
@@ -326,3 +376,25 @@ runFreshVar sem = do
           return (t <> pshow n)
     )
     sem
+
+data FreshLabel m a where
+  FreshLabel :: FreshLabel m Label
+
+runFreshLabel :: Member (Embed IO) r => Sem (FreshLabel ': r) a -> Sem r a
+runFreshLabel sem = do
+  ref <- embed $ newIORef (0 :: Int)
+  interpret
+    ( \case
+        FreshLabel -> do
+          n <- embed $ readIORef ref
+          embed $ writeIORef ref (n + 1)
+          return (Label n)
+    )
+    sem
+
+$(makeSem ''FreshLabel)
+
+term :: Member FreshLabel r => TermF Term -> Sem r Term
+term termTerm = do
+  termLabel <- freshLabel
+  pure Term {..}

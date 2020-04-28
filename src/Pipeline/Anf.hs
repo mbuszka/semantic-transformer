@@ -1,60 +1,61 @@
 module Pipeline.Anf
-  ( Anf (..),
-    transform,
+  ( transform,
   )
 where
 
-import qualified Data.Map as Map
 import Syntax
-import Syntax.Scoped as Scoped
 
-data Anf
-  = Atom (TermF Anf)
-  | Expr (TermF Anf)
+data Anf = Atom Term | Expr Term
 
-atom :: TermF Anf -> Sem r Anf
-atom = pure . Atom
+unwrap :: Anf -> Sem r Term
+unwrap (Atom t) = pure t
+unwrap (Expr t) = pure t
 
-expr :: TermF Anf -> Sem r Anf
-expr = pure . Expr
+type Effs r = Members [FreshVar, FreshLabel] r
 
-atomic :: Member FreshVar r => Term -> (Anf -> Sem r Anf) -> Sem r Anf
-atomic term k = toAnf term >>= \case
-  Expr t -> do
+atom :: Effs r => TermF Term -> Sem r Anf
+atom t = Atom <$> term t
+
+expr :: Effs r => TermF Term -> Sem r Anf
+expr t = Expr <$> term t
+
+atomic :: Effs r => (Term -> Sem r Term) -> Anf -> Sem r Term
+atomic k tm = case tm of
+  Atom a -> k a
+  Expr e -> do
     v <- freshVar "var"
-    body <- k (Atom $ Var v)
-    expr . Let (Expr t) $ Scope [(v, Nothing)] body
-  Atom t -> k (Atom t)
+    body <- k =<< term (Var v)
+    term $ Let (LetAnnot {letGenerated = True}) v e body
 
-toAnfValue :: Member FreshVar r => ValueF Term -> Sem r Anf
-toAnfValue v = case v of
-  Number n -> atom . Cons $ Number n
-  String t -> atom . Cons $ String t
-  Boolean b -> atom . Cons $ Boolean b
-  Record c ts -> seqAnf ts [] (atom . Cons . Record c)
+toAnfValue :: Effs r => ValueF Term -> (Anf -> Sem r Term) -> Sem r Term
+toAnfValue v k = case v of
+  Number n -> k =<< (atom . Cons $ Number n)
+  String t -> k =<< (atom . Cons $ String t)
+  Boolean b -> k =<< (atom . Cons $ Boolean b)
+  Record c ts -> seqAnf ts [] (k <=< atom . Cons . Record c)
 
-toAnf :: Member FreshVar r => Term -> Sem r Anf
-toAnf term = case Scoped.term term of
-  Var v -> atom $ Var v
-  Abs s -> Atom . Abs <$> traverse toAnf s
-  App f ts -> case f of
-    Term { term = Var v, ..} | fvs Map.!? v == Just PrimOp ->
-      seqAnf ts [] (atom . App (Atom $ Var v))
-    _ -> atomic f (\f' -> seqAnf ts [] (expr . App f'))
-  Let t s -> Expr <$> liftA2 Let (toAnf t) (traverse toAnf s)
-  Cons v -> toAnfValue v
-  Case t cs ->
-    atomic t (\t' -> Expr . Case t' <$> traverse toAnf cs)
-  Panic -> pure $ Expr Panic
+toAnf' :: Effs r => Term -> Sem r Term
+toAnf' t = toAnf t unwrap
 
-seqAnf ::
-  Member FreshVar r => [Term] -> [Anf] -> ([Anf] -> Sem r Anf) -> Sem r Anf
+toAnf :: Effs r => Term -> (Anf -> Sem r Term) -> Sem r Term
+toAnf Term {..} k = do
+  case termTerm of
+    Var {} -> k $ Atom Term {..}
+    Abs a s -> do
+      t' <- traverse toAnf' s
+      k $ Atom Term {termTerm = Abs a t', ..}
+    App f ts ->
+      toAnf f (atomic \f' -> seqAnf ts [] (\ts' -> k =<< expr (App f' ts')))
+    Let a x t s ->
+      toAnf t (\t' -> term =<< Let a x <$> (unwrap t') <*> toAnf s k)
+    Cons v -> toAnfValue v k
+    Case t cs ->
+      toAnf t (atomic \t' -> k =<< expr . Case t' =<< traverse toAnf' cs)
+    Panic -> term Panic
+
+seqAnf :: Effs r => [Term] -> [Term] -> ([Term] -> Sem r Term) -> Sem r Term
 seqAnf [] acc k = k (reverse acc)
-seqAnf (t : ts) acc k = atomic t (\t' -> seqAnf ts (t' : acc) k)
+seqAnf (t : ts) acc k = toAnf t (atomic \t' -> seqAnf ts (t' : acc) k)
 
-transform :: Member FreshVar r => Program Term -> Sem r (Program Anf)
-transform = traverse toAnf
-
-instance Pretty Anf where
-  pretty (Atom t) = pretty t
-  pretty (Expr t) = pretty t
+transform :: Effs r => Program Term -> Sem r (Program Term)
+transform = traverse toAnf'

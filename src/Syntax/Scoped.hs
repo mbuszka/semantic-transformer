@@ -1,6 +1,6 @@
 module Syntax.Scoped where
 
-import Syntax
+import Syntax hiding (Term (..))
 import Syntax.Source (SrcTerm (..))
 import Util
 

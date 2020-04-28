@@ -9,11 +9,13 @@ import qualified Parser
 import qualified Pipeline.Scope as Scope
 import qualified Pipeline.Structure as Structure
 import qualified Pipeline.Anf as Anf
+import qualified Pipeline.Inline as Inline
 import qualified Pipeline.Cps as Cps
 import qualified Pipeline.Defun as Defun
 import qualified Syntax.Source as Source
-import qualified Syntax.Scoped as Scoped
+-- import qualified Syntax.Scoped as Scoped
 import System.FilePath
+import Util.Pretty
 
 data Config
   = Config
@@ -31,18 +33,19 @@ run config = do
       . embedToFinal
       . errorToIOFinal
       . runFreshVar
+      . runFreshLabel
       $ runEffs config
   case res of
     Left err -> pprint err
     Right () -> pure ()
 
-runEffs :: Members '[Embed IO, FreshVar, Error Err] r => Config -> Sem r ()
+runEffs :: Members '[Embed IO, FreshVar, FreshLabel, Error Err] r => Config -> Sem r ()
 runEffs Config {..} = do
   txt <- embed $ TIO.readFile configSource
   SrcProgram {..} <- fromEither $ Parser.run configSource txt
   let srcName = takeBaseName configSource
   validated <- Structure.validate srcProgram
-  scoped <- Scope.checkProgram Source.unwrap Scoped.fromSource validated
+  scoped <- Scope.fromSource validated
   anf <- Anf.transform scoped
   when configDumpAnf do
     let anfFile = configDumpDir </> srcName <> "-anf" <.> "rkt"
@@ -52,5 +55,6 @@ runEffs Config {..} = do
     let cpsFile = configDumpDir </> srcName <> "-cps" <.> "rkt"
     embed $ TIO.writeFile cpsFile (srcPrologue <> pshow cps <> srcEpilogue)
   def <- Defun.transform cps
-  embed $ TIO.writeFile configOutput (srcPrologue <> pshow def <> srcEpilogue)
+  res <- traverse Inline.transform def
+  embed $ TIO.writeFile configOutput (srcPrologue <> pshow res <> srcEpilogue)
   pure ()
