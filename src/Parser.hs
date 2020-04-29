@@ -1,88 +1,96 @@
 module Parser
-  ( fromFile,
+  ( run,
   )
 where
 
 import qualified Data.Char as Char
-import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
-import Polysemy.Error hiding (try)
-import qualified ScopeCheck
-import Syntax hiding (mkTerm)
+import Syntax
+import Syntax.Source
 import Text.Megaparsec hiding (State (..))
 import Text.Megaparsec.Char hiding (space)
 import qualified Text.Megaparsec.Char.Lexer as L
 import Util
 
-fromFile :: Members '[Embed IO, Error Err] r => FilePath -> Sem r (Program Term)
-fromFile f = do
-  program <- readFile f
-  case runParser (many parseTopLevel <* eof) f program of
-    Left err -> throw . ParseError . Text.pack . errorBundlePretty $ err
-    Right t -> validateProgram t >>= ScopeCheck.fromSource
+run :: FilePath -> Text -> Either Err SrcProgram
+run fileName program = case runParser parseProgram fileName program of
+  Left err -> Left . ParseError . Text.pack . errorBundlePretty $ err
+  Right p -> Right p
 
 -- Parser
 
+begin :: Parser Text
+begin = do
+  b <- string "; begin interpreter" <* takeWhileP Nothing (/= '\n') <* space
+  pure $ b <> "\n\n"
+
+end :: Parser Text
+end = do
+  e <- string "; end interpreter" <* takeWhileP Nothing (/= '\n')
+  pure $ "\n" <> e
+
+parseProgram :: Parser SrcProgram
+parseProgram = do
+  (cs, b) <- manyTill_ anySingle begin
+  let srcPrologue = (Text.pack cs <> b)
+  (srcProgram, e) <- manyTill_ parseTopLevel end
+  srcEpilogue <- (e <>) <$> takeRest
+  pure (SrcProgram {..})
+
 type Parser a = Parsec Void Text a
 
-data TopLevel
-  = TDef Loc (Var, Def Term)
-  | TDecl Loc (Tp, [Tp])
-  | TTest TestCase
+parseField :: Parser StructField
+parseField =
+  choice
+    [ FieldName <$> var,
+      FieldType <$> tp,
+      brackets $ FieldBoth <$> tp <*> var
+    ]
 
-tag :: Parser Tag
-tag = SrcTag <$> text
+parseStruct :: Parser DefStruct
+parseStruct =
+  braces $ DefStruct <$> tp <*> many parseField
 
-var :: Parser Var
-var = mkVar <$> ident
-
-parseType :: Parser Tp
-parseType =
-  record
-    <|> ( text <&> \case
-            "integer" -> TInt
-            "string" -> TStr
-            "boolean" -> TBool
-            t -> TData t
-        )
-  where
-    record = braces (liftA2 TRecord tag (many parseType))
+parseType :: Parser (Either Tp DefStruct)
+parseType = (Left <$> tp) <|> (Right <$> parseStruct)
 
 typed :: Parser (Var, Maybe Tp)
 typed = fmap (,Nothing) var <|> brackets do
+  t <- tp
   v <- var
-  tp <- parseType
-  pure (v, Just tp)
+  pure (v, Just t)
 
-mkTerm :: Parser (TermF Term) -> Parser Term
+mkTerm :: Parser (TermF SrcTerm) -> Parser SrcTerm
 mkTerm p = do
   SourcePos _ row col <- getSourcePos
-  let loc = Loc (unPos row) (unPos col)
-  Term (Just loc) <$> p
+  let srcLoc = Loc (unPos row) (unPos col)
+  srcTerm <- p
+  pure $ SrcTerm {..}
 
-parseTerm :: Parser Term
-parseTerm = mkTerm (parens expr <|> cons <|> err <|> variable)
+parseTerm :: Parser SrcTerm
+parseTerm = mkTerm (parens expr <|> cons <|> variable)
   where
     variable = Var <$> var
     cons = Cons <$> parseValue parseTerm
-    expr = choice [lam, let', case', app]
+    expr = choice [lam, let', case', err, app]
     lam = keyword "fun" >> do
+      as <- Set.fromList <$> many annot
       xs <- parens (many typed)
-      Abs . Scope xs <$> parseTerm
+      Abs (transformAnnots as) . Scope xs <$> parseTerm
     let' = keyword "let" >> do
-      v <- typed
+      x <- var
       lhs <- parseTerm
       rhs <- parseTerm
-      pure $ Let lhs (Scope [v] rhs)
+      pure $ Let (LetAnnot { letGenerated = False}) x lhs rhs
     app = liftA2 App parseTerm (many parseTerm)
-    case' = keyword "case" *> liftA2 Case parseTerm parsePatterns
-    err = keyword "panic" $> Panic
+    case' = keyword "match" *> liftA2 Case parseTerm parsePatterns
+    err = keyword "error" >> stringLiteral $> Panic
 
-parsePatterns :: Parser (Patterns Term)
+parsePatterns :: Parser (Patterns SrcTerm)
 parsePatterns = Patterns <$> many parseCase
 
-parseCase :: Parser (Pattern (), Scope Term)
+parseCase :: Parser (Pattern (), Scope SrcTerm)
 parseCase = parens $ do
   (p, xs) <- extractNames <$> pattern
   t <- parseTerm
@@ -92,44 +100,39 @@ parseCase = parens $ do
       choice
         [ PWild <$ keyword "_",
           PCons <$> parseValue pattern,
-          typed <&> \case (v, tp) -> PVar v tp
+          PVar <$> var,
+          brackets $ PType <$> tp <*> var
         ]
-
-annot :: Parser Annot
-annot = empty
-
-parseDef :: Parser (Var, Def Term)
-parseDef = do
-  x <- keyword "def" >> var
-  as <- Set.fromList <$> many annot
-  xs <- parens (many typed)
-  t <- parseTerm
-  pure (x, Def as (Scope xs t))
-
-parseDecl :: Parser (Tp, [Tp])
-parseDecl = do
-  name <- keyword "def-data" >> parseType
-  tps <- many $ parseType
-  pure (name, tps)
 
 parseValue :: Parser v -> Parser (ValueF v)
 parseValue subTerm =
   choice
-    [ Number <$> numberLiteral,
+    [ Number <$> try numberLiteral,
       String <$> stringLiteral,
       Boolean True <$ keyword "#t",
       Boolean False <$ keyword "#f",
-      braces (Record <$> tag <*> many subTerm)
+      braces (Record <$> tp <*> many subTerm)
     ]
 
-parseTestCase :: Parser TestCase
-parseTestCase = do
-  desc <- keyword "def-test" >> stringLiteral
-  inputs <- parens (many value)
-  output <- value
-  pure $ TestCase desc inputs output
-  where
-    value = Value <$> parseValue value
+annot :: Parser Annot
+annot = keyword "#:atomic" >> pure Atomic
+
+parseFun :: Parser (DefFun SrcTerm)
+parseFun = do
+  x <- keyword "def" >> var
+  as <- Set.fromList <$> many annot
+  xs <- parens (many typed)
+  t <- parseTerm
+  pure $ DefFun x (transformAnnots as) (Scope xs t)
+
+transformAnnots :: Set Annot -> FunAnnot
+transformAnnots as = FunAnnot {funAtomic = Set.member Atomic as}
+
+parseData :: Parser DefData
+parseData = do
+  name <- keyword "def-data" >> tp
+  tps <- many $ parseType
+  pure $ DefData name tps
 
 parseTopLevel :: Parser TopLevel
 parseTopLevel = do
@@ -137,37 +140,10 @@ parseTopLevel = do
   let loc = Loc (unPos row) (unPos col)
   parens $
     choice
-      [ TDecl loc <$> parseDecl,
-        TTest <$> parseTestCase,
-        TDef loc <$> parseDef
+      [ TData loc <$> parseData,
+        TFun loc <$> parseFun,
+        TStruct loc <$> (keyword "def-struct" >> parseStruct)
       ]
-
-validateProgram ::
-  forall r. Member (Error Err) r => [TopLevel] -> Sem r (Program Term)
-validateProgram topLevels = do
-  (defs, types, tests, main) <- aux Map.empty Map.empty [] Nothing topLevels
-  pure $
-    Program
-      { programDefinitions = defs,
-        programDatatypes = types,
-        programTests = reverse tests,
-        programMain = main
-      }
-  where
-    aux defs types test main ts = case (main, ts) of
-      (Nothing, []) -> throw @Err @r (ModuleError "No main in file")
-      (Just m, []) -> pure (defs, types, test, m)
-      (Nothing, TDef _ (SrcVar "main", def) : ts') ->
-        aux defs types test (Just def) ts'
-      (Just _, TDef l (SrcVar "main", _) : _) ->
-        throw (ScopeError (Just l) "Redefinition of main")
-      (_, TDef l (v, def) : ts') -> case Map.lookup v defs of
-        Nothing -> aux (Map.insert v def defs) types test main ts'
-        Just _ -> throw (ScopeError (Just l) "Redefinition of a top-level function")
-      (_, TDecl l (n, d) : ts') -> case Map.lookup n types of
-        Nothing -> aux defs (Map.insert n d types) test main ts'
-        Just _ -> throw (ScopeError (Just l) "Redefinition of a data type")
-      (_, TTest t : ts') -> aux defs types (t : test) main ts'
 
 -- Lexer
 
@@ -175,10 +151,11 @@ keywords :: Set Text
 keywords =
   Set.fromList
     [ "_",
-      "case",
+      "match",
       "def",
       "def-data",
-      "panic",
+      "def-struct",
+      "error",
       "fun",
       "let"
     ]
@@ -192,15 +169,19 @@ brackets = between (symbol "[") (symbol "]")
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
-ident :: Parser Text
-ident = mfilter (not . flip elem keywords) $ text
+var :: Parser Var
+var = MkVar <$> lexeme (mfilter (not . flip elem keywords) $ text)
+  where
+    text = Text.cons <$> satisfy identFirst <*> takeWhileP Nothing identRest
+
+tp :: Parser Tp
+tp = MkTp <$> lexeme text
+  where
+    text = Text.cons <$> satisfy Char.isAsciiUpper <*> takeWhileP Nothing identRest
 
 keyword :: Text -> Parser Text
 keyword s = lexeme $ try (string s <* notFollowedBy (satisfy identRest))
-
-text :: Parser Text
-text =
-  lexeme (Text.cons <$> satisfy identFirst <*> takeWhileP Nothing identRest)
+  
 
 stringLiteral :: Parser Text
 stringLiteral =
@@ -218,7 +199,7 @@ lexeme :: Parser a -> Parser a
 lexeme = L.lexeme space
 
 space :: Parser ()
-space = L.space space1 (L.skipLineComment ";") empty
+space = L.space space1 (L.skipLineComment ";;") empty
 
 identFirst :: Char -> Bool
 identFirst c = case c of
@@ -227,6 +208,7 @@ identFirst c = case c of
   '+' -> True
   '/' -> True
   '*' -> True
+  '?' -> True
   _ -> Char.isAlpha c
 
 identRest :: Char -> Bool

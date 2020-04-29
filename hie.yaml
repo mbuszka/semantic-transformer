@@ -1,1 +1,8 @@
-cradle: {cabal: {component: "exe:semt"}}
+cradle:
+  multi:
+    - path: "src"
+      config: {cradle: {cabal: {component: "lib:semantic-transformer"}}}
+    - path: "semt"
+      config: {cradle: {cabal: {component: "exe:semt"}}}
+    - path: "test"
+      config: {cradle: {cabal: {component: "test:semt-test"}}}

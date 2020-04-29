@@ -24,7 +24,9 @@ module Prelude
     module GHC.Real,
     module GHC.Show,
     module Polysemy,
+    all,
     error,
+    identity,
     pprint,
     pprint',
     pshow,
@@ -39,15 +41,15 @@ import Control.Applicative
     liftA2,
     liftA3,
   )
-import Control.Monad ((<=<), (=<<), (>=>), mfilter, when)
+import Control.Monad ((<=<), (=<<), (>=>), mfilter, when, join)
 import Control.Monad.IO.Class (MonadIO (..))
-import Data.Either (Either (..))
-import Data.Foldable (Foldable (..), for_, toList, traverse_)
+import Data.Either (Either (..), either)
+import Data.Foldable (Foldable (..), for_, toList, traverse_, foldlM)
 import Data.Function ((&), (.), const)
 import Data.Functor (($>), (<$>), (<&>), Functor (..), void)
 import Data.List (reverse, take, zip)
 import Data.Map (Map)
-import Data.Maybe (Maybe (..))
+import Data.Maybe (Maybe (..), maybe, fromMaybe)
 import Data.Monoid (Monoid (..))
 import Data.Semigroup ((<>), Semigroup)
 import Data.Sequence (Seq (..))
@@ -85,7 +87,13 @@ import GHC.Num ((*), (+), (-), Num)
 import GHC.Real (Integral(..))
 import GHC.Show (Show (show))
 import GHC.Stack (HasCallStack)
-import Polysemy
+import Polysemy hiding (run, transform)
+
+all :: (Foldable f, Monad m) => (a -> m Bool) -> f a -> m Bool
+all p xs = foldlM f True xs
+  where
+    f False _ = pure False
+    f True  r = p r
 
 pprint' :: MonadIO m => Doc ann -> m ()
 pprint' = liftIO . Text.putStrLn . pshow'
@@ -107,3 +115,7 @@ readFile = liftIO . Text.readFile
 
 error :: HasCallStack => Text -> a
 error = Base.error . Text.unpack
+
+{-# INLINE identity #-}
+identity :: forall a. a -> a
+identity x = x

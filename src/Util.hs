@@ -4,7 +4,7 @@ module Util
   )
 where
 
-import Pretty
+import Util.Pretty
 import Data.Text.Prettyprint.Doc
 
 data Loc = Loc !Int !Int

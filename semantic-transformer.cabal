@@ -22,21 +22,33 @@ source-repository head
   type: git
   location: https://github.com/mbuszka/semantic-transformer
 
-executable semt
-  main-is:             Main.hs
+library
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+  
+  exposed-modules:
+    Pipeline
+  
   other-modules:
-    Anf
-    Cps
-    Defun
-    Defun.Cfa
-    Defun.Labeled
-    Eval
+    AbsInt
+    AbsInt.Interpreter
+    AbsInt.Runner
+    AbsInt.Types
+    Pipeline.Anf
+    Pipeline.Cps
+    Pipeline.Defun
+    Pipeline.Inline
+    Pipeline.Scope
+    Pipeline.Structure
     Parser
     Prelude
-    Pretty
-    ScopeCheck
     Syntax
+    Syntax.Scoped
+    Syntax.Source
+    Syntax.Term
     Util
+    Util.Pretty
+  
   default-extensions:
     BlockArguments
     ConstraintKinds
@@ -63,27 +75,56 @@ executable semt
     TypeApplications
     TypeFamilies
     TypeOperators
+  
   build-depends:
     , base-noprelude >=4.7 && <5
     , containers
-    , polysemy
-    , polysemy-plugin
+    , directory
+    , filepath
     , megaparsec
     , mtl
-    , optparse-applicative
+    , optics
     , parser-combinators
+    , polysemy
+    , polysemy-plugin
     , prettyprinter
-    , relude
     , text
     , transformers
-  hs-source-dirs:      src
-  default-language:    Haskell2010
+  
+  ghc-options:
+    -Wall
+    -fplugin=Polysemy.Plugin
+    -flate-specialise
+    -fspecialise-aggressively
+
+executable semt
+  main-is:            Main.hs
+  hs-source-dirs:     semt
+  default-language:   Haskell2010
+  
+  build-depends:
+    , base
+    , optparse-applicative
+    , semantic-transformer
+    , text
+  
   ghc-options:
     -threaded
     -rtsopts
     -with-rtsopts=-N
-    -Wall
-    -- -Wno-name-shadowing
-    -fplugin=Polysemy.Plugin
-    -flate-specialise
-    -fspecialise-aggressively
+
+
+test-suite semt-test
+  type: exitcode-stdio-1.0
+  main-is:            Spec.hs
+  hs-source-dirs:     test
+  default-language:   Haskell2010
+  
+  build-depends:
+    , base
+    , hspec
+    , directory
+    , filepath
+    , process
+    , semantic-transformer
+    , text

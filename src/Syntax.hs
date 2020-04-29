@@ -1,30 +1,45 @@
 module Syntax
   ( Annot (..),
     Bound (..),
-    Def (..),
+    DefData (..),
+    DefFun (..),
+    DefStruct (..),
+    FreshLabel,
     FreshVar,
+    FunAnnot (..),
+    Fvs,
+    Label (..),
+    LetAnnot (..),
     Pattern (..),
     Patterns (..),
     PrimOp (..),
-    Pretty (..),
     Program (..),
+    RefersTo (..),
     Scope (..),
-    Tag (..),
-    Term (..),
+    StructField (..),
     TermF (..),
-    TestCase (..),
+    Term (..),
     Tp (..),
-    Value (..),
     ValueF (..),
     Var (..),
     extractNames,
+    freshLabel,
+    freshTag,
     freshVar,
-    mkTerm,
     mkVar,
     insertNames,
+    primOpNames,
     primOps,
+    programScopes,
+    programTerms,
+    runFreshLabel,
     runFreshVar,
     scope,
+    scopeBody,
+    scopeVars,
+    term,
+    tpToVar,
+    varToTp,
   )
 where
 
@@ -32,43 +47,70 @@ import Control.Monad.State.Strict
 import Data.IORef
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import Pretty
-import Util
+import qualified Data.Text as Text
+import Util.Pretty
 
 data Program t
   = Program
-      { programDefinitions :: Map Var (Def t),
-        programDatatypes :: Map Tp [Tp],
-        programTests :: [TestCase],
-        programMain :: Def t
+      { programDefinitions :: [DefFun t],
+        programDatatypes :: [DefData],
+        programStructs :: [DefStruct],
+        programMain :: DefFun t
       }
   deriving (Functor, Foldable, Traversable)
 
-data Def t = Def {defAnnotations :: Set Annot, defScope :: Scope t}
+data DefFun t
+  = DefFun
+      { funName :: Var,
+        funAnnot :: FunAnnot,
+        funScope :: Scope t
+      }
   deriving (Functor, Foldable, Traversable)
 
+data DefData = DefData {dataName :: Tp, dataTypes :: [Either Tp DefStruct]}
+
+data DefStruct = DefStruct {structName :: Tp, structFields :: [StructField]}
+
+data StructField = FieldName Var | FieldType Tp | FieldBoth Tp Var
+
 data Annot
-  = NoCps
+  = Atomic
   deriving (Eq, Ord)
 
-data TestCase = TestCase Text [Value] Value
+data FunAnnot
+  = FunAnnot
+      { funAtomic :: Bool
+      }
+
+data LetAnnot
+  = LetAnnot
+      { letGenerated :: Bool
+      }
 
 data PrimOp = Add | Sub | Mul | Div | Neg | And | Or | Not | Eq
   deriving (Eq, Ord)
 
+newtype Label = Label {unLabel :: Int} deriving (Eq, Ord, Pretty)
+
+type Fvs = Map Var RefersTo
+
+data RefersTo = RefGlobal | RefPrimOp | RefLocal deriving (Eq, Ord)
+
 data TermF t
   = Var Var
-  | Abs (Scope t)
+  | Abs FunAnnot (Scope t)
   | App t [t]
-  | Prim PrimOp [t]
-  | Let t (Scope t)
+  | Let LetAnnot Var t t
   | Case t (Patterns t)
   | Cons (ValueF t)
   | Panic
   deriving (Functor, Foldable, Traversable)
 
+data Term = Term {termTerm :: TermF Term, termLabel :: Label}
+
 data Pattern v
-  = PVar v (Maybe Tp)
+  = PVar v
+  | PType Tp v
   | PWild
   | PCons (ValueF (Pattern v))
   deriving (Functor, Foldable, Eq, Ord)
@@ -76,19 +118,11 @@ data Pattern v
 newtype Patterns t = Patterns [(Pattern (), Scope t)]
   deriving (Functor, Foldable, Traversable, Eq, Ord)
 
-data Var = SrcVar Text | GenVar Text Int
-  deriving (Eq, Ord, Show)
+newtype Var = MkVar Text
+  deriving (Eq, Ord, Show, Pretty)
 
-data Tag = SrcTag Text | GenTag Int | TopTag Var
-  deriving (Eq, Ord, Show)
-
-data Tp
-  = TData Text
-  | TInt
-  | TStr
-  | TBool
-  | TRecord Tag [Tp]
-  deriving (Eq, Ord)
+newtype Tp = MkTp Text
+  deriving (Eq, Ord, Show, Pretty)
 
 data Scope t = Scope [(Var, Maybe Tp)] t
   deriving (Eq, Ord, Functor, Foldable, Traversable)
@@ -97,35 +131,21 @@ data ValueF t
   = Number Int
   | String Text
   | Boolean Bool
-  | Record Tag [t]
+  | Record Tp [t]
   deriving (Eq, Ord, Functor, Foldable, Traversable)
-
-newtype Value = Value {unValue :: ValueF Value}
-  deriving (Eq, Ord, Bound, Pretty)
-
--- Various syntax representations
-data Term
-  = Term
-      { termLoc :: Maybe Loc,
-        unTerm :: TermF Term
-      }
-
-instance Pretty Term where
-  pretty = pretty . unTerm
-
-instance Bound Term where
-  freeVars = freeVars . unTerm
-
-  rename vs (Term l t) = Term l (rename vs t)
 
 -- Handling of bound variables
 class Bound t where
   freeVars :: t -> Set Var
 
+  allVars :: t -> Set Var
+
   rename :: Map Var Var -> t -> t
 
 instance Bound t => Bound (Scope t) where
   freeVars (Scope vs t) = freeVars t Set.\\ (Set.fromList . fmap fst $ vs)
+
+  allVars (Scope vs t) = allVars t <> (Set.fromList . fmap fst $ vs)
 
   rename vars (Scope vs t) =
     let bound = Set.fromList (fmap fst vs)
@@ -137,29 +157,45 @@ instance Bound t => Bound (Scope t) where
 instance Bound t => Bound (TermF t) where
   freeVars term = case term of
     Var v -> Set.singleton v
-    Abs s -> freeVars s
-    Let t s -> freeVars t `Set.union` freeVars s
+    Abs _ s -> freeVars s
+    Let _ x t s -> freeVars t <> (Set.delete x $ freeVars s)
     Case t ps -> freeVars t `Set.union` freeVars ps
     _ -> foldMap freeVars term
 
+  allVars term = case term of
+    Var v -> Set.singleton v
+    Abs _ s -> allVars s
+    Let _ x t s -> Set.singleton x <> allVars t <> allVars s
+    Case t ps -> allVars t <> allVars ps
+    _ -> foldMap allVars term
+
   rename vars term = case term of
     Var v -> Var $ Map.findWithDefault v v vars
-    Abs s -> Abs $ rename vars s
-    Let t s -> Let (rename vars t) (rename vars s)
+    Abs a s -> Abs a $ rename vars s
+    Let a x t s -> Let a x (rename vars t) (rename (Map.delete x vars) s)
     Case t ps -> Case (rename vars t) (rename vars ps)
     _ -> fmap (rename vars) term
 
 instance Bound v => Bound (ValueF v) where
-  freeVars (Record _ ts) = foldMap freeVars ts
-  freeVars _ = Set.empty
+  freeVars = foldMap freeVars
 
-  rename vars (Record c ts) = Record c (fmap (rename vars) ts)
-  rename _ v = v
+  allVars = foldMap allVars
+
+  rename vars = fmap (rename vars)
 
 instance Bound t => Bound (Patterns t) where
   freeVars (Patterns ps) = foldMap (freeVars . snd) ps
 
+  allVars (Patterns ps) = foldMap (allVars . snd) ps
+
   rename vars (Patterns ps) = Patterns (fmap (fmap (rename vars)) ps)
+
+instance Bound Term where
+  freeVars Term {..} = freeVars termTerm
+
+  allVars Term {..} = allVars termTerm
+
+  rename vars Term {..} = Term {termTerm = rename vars termTerm, ..}
 
 -- Pattern helpers
 extractNames :: Pattern Var -> (Pattern (), [Var])
@@ -170,42 +206,65 @@ insertNames pattern vars = case go pattern vars of
   (p, []) -> p
   _ -> error "Too many variables to insert into pattern"
   where
-    go (PVar _ tp) (v : vs) = (PVar v tp, vs)
-    go (PVar _ _) [] = error "Not enough variables to insert into pattern"
+    go (PVar _) (v : vs) = (PVar v, vs)
+    go (PType t _) (v : vs) = (PType t v, vs)
     go PWild vs = (PWild, vs)
     go (PCons r) vs = runState (PCons <$> traverse (state . go) r) vs
+    go _ _ = error "Not enough variables to insert into pattern"
 
 mkVar :: Text -> Var
-mkVar = SrcVar
+mkVar = MkVar
 
--- Smart constructors
+-- Other helpers
 scope :: [Var] -> t -> Scope t
 scope vs = Scope (fmap (,Nothing) vs)
 
-mkTerm :: TermF Term -> Term
-mkTerm = Term Nothing
+scopeVars :: Scope e -> [Var]
+scopeVars (Scope xs _) = fmap fst xs
 
-primOps :: Map Text PrimOp
+scopeBody :: Scope e -> e
+scopeBody (Scope _ e) = e
+
+varToTp :: Var -> Tp
+varToTp (MkVar v) = MkTp (Text.toTitle v)
+
+tpToVar :: Tp -> Var
+tpToVar (MkTp t) = MkVar (Text.toLower t)
+
+programScopes :: Program t -> Map Var (Scope t)
+programScopes Program {..} =
+  Map.fromList $ programDefinitions <&> \DefFun {..} -> (funName, funScope)
+
+programTerms :: Program Term -> Map Label Term
+programTerms = foldMap aux
+  where
+    aux term@Term {..} = Map.insert termLabel term $ foldMap aux termTerm
+
+primOps :: Map Var PrimOp
 primOps =
   Map.fromList
-    [ ("add", Add),
-      ("sub", Sub),
-      ("mul", Mul),
-      ("div", Div),
-      ("neg", Neg),
-      ("and", And),
-      ("not", Not),
-      ("or", Or),
-      ("eq", Eq)
+    [ (MkVar "+", Add),
+      (MkVar "-", Sub),
+      (MkVar "*", Mul),
+      (MkVar "/", Div),
+      (MkVar "neg", Neg),
+      (MkVar "and", And),
+      (MkVar "not", Not),
+      (MkVar "or", Or),
+      (MkVar "eq?", Eq)
     ]
 
+primOpNames :: Map PrimOp Var
+primOpNames = Map.fromList $ fmap swap $ Map.toList primOps
+
 -- Pretty printing
-instance Pretty Var where
-  pretty (SrcVar v) = pretty v
-  pretty (GenVar t n) = pretty t <> "-" <> pretty n
+
+instance Pretty Term where
+  pretty Term {..} = {- pretty termLabel <> "#" <> -} pretty termTerm
 
 instance Pretty (Pattern Var) where
-  pretty (PVar v tp) = variable (v, tp)
+  pretty (PVar v) = pretty v
+  pretty (PType tp v) = brackets $ pretty tp <+> pretty v
   pretty PWild = "_"
   pretty (PCons r) = pretty r
 
@@ -213,26 +272,28 @@ instance Pretty t => Pretty (TermF t) where
   pretty = prettyTerm
 
 instance Pretty Annot where
-  pretty NoCps = "@no-cps"
+  pretty Atomic = "#:atomic"
 
 instance Pretty t => Pretty (Program t) where
   pretty Program {..} =
-    types <> hardline <> main <> hardline <> defs <> hardline <> tests
+    types <> hardline <> main <> hardline <> defs <> hardline <> structs
     where
-      defs = rows . fmap def . Map.toList $ programDefinitions
-      def (name, Def _ (Scope vs t)) =
-        hardline
-          <> parens ("def" <+> pretty name <> body (variables vs) (pretty t))
-      types = rows . fmap typ . Map.toList $ programDatatypes
-      typ (name, records) =
-        parens
-          ( "def-data"
-              <+> pretty name <> nested 2 (rows . fmap pretty $ records)
-          )
-          <> hardline
-      main = parens ("def main" <> body (variables mvs) (pretty mb))
-      Def _ (Scope mvs mb) = programMain
-      tests = rows . fmap pretty $ programTests
+      defs = rows $ fmap (\d -> pretty d <> hardline) programDefinitions
+      types = rows $ fmap (\t -> pretty t <> hardline) programDatatypes
+      main = pretty programMain
+      structs = rows $ programStructs <&> \s -> parens ("def-struct" <+> pretty s)
+
+instance Pretty t => Pretty (DefFun t) where
+  pretty DefFun {..} =
+    parens $ "def" <+> pretty funName <> prettyBody (variables vs) (pretty body)
+    where
+      Scope vs body = funScope
+
+instance Pretty DefData where
+  pretty DefData {..} =
+    parens $ "def-data" <+> pretty dataName <> nested 2 types
+    where
+      types = rows $ fmap (either pretty pretty) dataTypes
 
 instance Pretty v => Pretty (ValueF v) where
   pretty (Number n) = pretty n
@@ -240,11 +301,6 @@ instance Pretty v => Pretty (ValueF v) where
   pretty (Record c ts) = braces (pretty c <> (nested' 2 ts))
   pretty (Boolean True) = "#t"
   pretty (Boolean False) = "#f"
-
-instance Pretty TestCase where
-  pretty (TestCase desc inputs output) =
-    let vs = aligned' [parens (aligned inputs), pretty output]
-     in parens ("def-test" <+> escape desc <> nested 2 vs)
 
 instance Pretty t => Pretty (Patterns t) where
   pretty (Patterns ps) = case ps of
@@ -258,17 +314,14 @@ instance Pretty t => Pretty (Patterns t) where
 instance Pretty t => Pretty (Scope t) where
   pretty (Scope xs t) = variables xs <+> pretty t
 
-instance Pretty Tag where
-  pretty (SrcTag c) = pretty c
-  pretty (GenTag lbl) = "lam-" <> pretty lbl
-  pretty (TopTag v) = pretty v
+instance Pretty StructField where
+  pretty (FieldName v) = pretty v
+  pretty (FieldType t) = pretty t
+  pretty (FieldBoth t v) = brackets $ pretty t <+> pretty v
 
-instance Pretty Tp where
-  pretty (TRecord c ts) = braces (pretty c <> (nested' 2 ts))
-  pretty TInt = "integer"
-  pretty TStr = "string"
-  pretty TBool = "boolean"
-  pretty (TData t) = pretty t
+instance Pretty DefStruct where
+  pretty DefStruct {..} =
+    braces $ pretty structName <+> aligned structFields
 
 instance Pretty PrimOp where
   pretty op =
@@ -279,44 +332,69 @@ prettyTerm :: Pretty t => TermF t -> Doc ann
 prettyTerm term = case term of
   Var v -> pretty v
   Cons v -> pretty v
-  Abs (Scope vs t) ->
-    parens ("fun" <> body (variables vs) (pretty t))
+  Abs _ (Scope vs t) ->
+    parens ("fun" <> prettyBody (variables vs) (pretty t))
   App f ts ->
     parens (pretty f <> nested' 2 ts)
-  Prim op ts ->
-    "#" <> parens (pretty op <> nested' 2 ts)
-  Let t (Scope [v] b) ->
-    parens ("let" <+> pretty v <> body (pretty t) (pretty b))
-  Let _ _ ->
-    error "Let should bind only a single variable"
+  Let _ x t b ->
+    parens ("let" <> prettyBody (parens (brackets (aligned' [pretty x, pretty t]))) (pretty b))
   Case t ps ->
-    parens ("case" <> body (pretty t) (pretty ps))
-  Panic -> "panic"
+    parens ("match" <> prettyBody (pretty t) (pretty ps))
+  Panic -> parens $ "error" <+> pretty (String @() "panic")
 
 variable :: (Var, Maybe Tp) -> Doc ann
 variable (v, Nothing) = pretty v
-variable (v, Just tp) = brackets . aligned' $ [pretty v, pretty tp]
+variable (v, Just tp) = brackets . aligned' $ [pretty tp, pretty v]
 
 variables :: [(Var, Maybe Tp)] -> Doc ann
 variables = parens . aligned' . fmap variable
 
 -- Fresh variable generation
+
 data FreshVar m a where
-  FreshVar :: Text -> FreshVar m Var
+  Fresh :: Text -> FreshVar m Text
 
 $(makeSem ''FreshVar)
+
+freshVar :: Member FreshVar r => Text -> Sem r Var
+freshVar t = fresh t <&> MkVar
+
+freshTag :: Member FreshVar r => Text -> Sem r Tp
+freshTag t = fresh t <&> MkTp
 
 runFreshVar :: Member (Embed IO) r => Sem (FreshVar ': r) a -> Sem r a
 runFreshVar sem = do
   ref <- embed $ newIORef (Map.empty :: Map Text Int)
   interpret
     ( \case
-        FreshVar t -> do
+        Fresh t -> do
           names <- embed $ readIORef ref
           let (n, m) = case Map.lookup t names of
                 Nothing -> (1, Map.insert t 1 names)
                 Just x -> (x + 1, Map.insert t (x + 1) names)
           embed $ writeIORef ref m
-          return (GenVar t n)
+          return (t <> pshow n)
     )
     sem
+
+data FreshLabel m a where
+  FreshLabel :: FreshLabel m Label
+
+runFreshLabel :: Member (Embed IO) r => Sem (FreshLabel ': r) a -> Sem r a
+runFreshLabel sem = do
+  ref <- embed $ newIORef (0 :: Int)
+  interpret
+    ( \case
+        FreshLabel -> do
+          n <- embed $ readIORef ref
+          embed $ writeIORef ref (n + 1)
+          return (Label n)
+    )
+    sem
+
+$(makeSem ''FreshLabel)
+
+term :: Member FreshLabel r => TermF Term -> Sem r Term
+term termTerm = do
+  termLabel <- freshLabel
+  pure Term {..}
