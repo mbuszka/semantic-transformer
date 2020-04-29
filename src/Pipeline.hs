@@ -14,6 +14,7 @@ import qualified Pipeline.Cps as Cps
 import qualified Pipeline.Defun as Defun
 import System.Directory
 import System.FilePath
+import Data.Bifunctor
 
 data Config
   = Config
@@ -23,7 +24,7 @@ data Config
         configDumpCps :: Bool
       }
 
-run :: Config -> IO ()
+run :: Config -> IO (Either Text ())
 run config = do
   res <-
     runFinal
@@ -32,9 +33,7 @@ run config = do
       . runFreshVar
       . runFreshLabel
       $ runEffs config
-  case res of
-    Left err -> pprint err
-    Right () -> pure ()
+  pure $ first pshow res
 
 runEffs :: Members '[Embed IO, FreshVar, FreshLabel, Error Err] r => Config -> Sem r ()
 runEffs Config {..} = do

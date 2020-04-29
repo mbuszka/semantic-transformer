@@ -2,11 +2,17 @@ module Main where
 
 import Pipeline
 import Options.Applicative
+import qualified Data.Text.IO as TIO
+import System.Exit
+
 
 main :: IO ()
 main = do
   config <- execParser parser
-  Pipeline.run config
+  res <- Pipeline.run config
+  case res of
+    Left err -> TIO.putStrLn err >> exitFailure
+    Right () -> pure ()
 
 parser :: ParserInfo Config
 parser = info (parseConfig <**> helper) desc

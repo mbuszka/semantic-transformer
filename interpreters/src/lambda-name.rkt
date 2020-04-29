@@ -25,8 +25,8 @@
 (def eval ([Term expr] [Env env])
   (match expr
     ([Integer n] ((nth env n)))
-    ({App f x} ((eval f env) (lambda () (eval x env))))
-    ({Abs body} (lambda (x) (eval body {Cons x env})))
+    ({App f x} ((eval f env) (fun () (eval x env))))
+    ({Abs body} (fun (x) (eval body {Cons x env})))
     ({Unit} {Unit})
   ))
 

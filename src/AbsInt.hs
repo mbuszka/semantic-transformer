@@ -10,7 +10,7 @@ where
 
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import Syntax hiding (Target (..))
+import Syntax
 import qualified AbsInt.Types as T
 import AbsInt.Types (Value, AbsInt (..), Store (..))
 import AbsInt.Runner
