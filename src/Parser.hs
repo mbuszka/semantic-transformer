@@ -74,7 +74,7 @@ parseTerm = mkTerm (parens expr <|> cons <|> variable)
     variable = Var <$> var
     cons = Cons <$> parseValue parseTerm
     expr = choice [lam, let', case', err, app]
-    lam = keyword "lambda" >> do
+    lam = keyword "fun" >> do
       as <- Set.fromList <$> many annot
       xs <- parens (many typed)
       Abs (transformAnnots as) . Scope xs <$> parseTerm
@@ -156,7 +156,7 @@ keywords =
       "def-data",
       "def-struct",
       "error",
-      "lambda",
+      "fun",
       "let"
     ]
 

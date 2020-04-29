@@ -333,7 +333,7 @@ prettyTerm term = case term of
   Var v -> pretty v
   Cons v -> pretty v
   Abs _ (Scope vs t) ->
-    parens ("lambda" <> prettyBody (variables vs) (pretty t))
+    parens ("fun" <> prettyBody (variables vs) (pretty t))
   App f ts ->
     parens (pretty f <> nested' 2 ts)
   Let _ x t b ->

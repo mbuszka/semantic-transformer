@@ -7,6 +7,7 @@
 (provide def-data
          def-struct
          def
+         fun
          Integer
          String
          Boolean)
@@ -89,6 +90,11 @@
      #:with contract #'(-> arg.contract ... any/c)
      #'(begin
          (define/contract (name arg.name ...) contract body))]))
+
+(define-syntax (fun stx)
+  (syntax-parse stx
+    [(_ _:keyword ... (arg:id ...) body)
+     #'(lambda (arg ...) body)]))
 
 (define-match-expander Integer
   (lambda (stx) (syntax-case stx () [(_ p) #'(? integer? p)])))

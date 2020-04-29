@@ -19,13 +19,13 @@
     ([String x] (env x))
     ([Integer n] n)
     ({Lam x body}
-     (lambda (v) (eval (extend env x v) body)))
+     (fun (v) (eval (extend env x v) body)))
     ({App f x} ((eval env f) (eval env x)))
     ({Add n m} (+ (eval env n) (eval env m)))
     ))
 
 (def extend #:atomic (env k v)
-  (lambda #:atomic (x)
+  (fun #:atomic (x)
     (match (eq? x k)
       (#t v)
       (#f (env x)))))
