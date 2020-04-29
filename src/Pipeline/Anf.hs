@@ -30,9 +30,9 @@ atomic k tm = case tm of
 toAnfValue :: Effs r => ValueF Term -> (Anf -> Sem r Term) -> Sem r Term
 toAnfValue v k = case v of
   Number n -> k =<< (atom . Cons $ Number n)
-  String t -> k =<< (atom . Cons $ String t)
+  String t -> k =<< (expr . Cons $ String t)
   Boolean b -> k =<< (atom . Cons $ Boolean b)
-  Record c ts -> seqAnf ts [] (k <=< atom . Cons . Record c)
+  Record c ts -> seqAnf ts [] (k <=< expr . Cons . Record c)
 
 toAnf' :: Effs r => Term -> Sem r Term
 toAnf' t = toAnf t unwrap
@@ -43,7 +43,7 @@ toAnf Term {..} k = do
     Var {} -> k $ Atom Term {..}
     Abs a s -> do
       t' <- traverse toAnf' s
-      k $ Atom Term {termTerm = Abs a t', ..}
+      k $ Expr Term {termTerm = Abs a t', ..}
     App f ts ->
       toAnf f (atomic \f' -> seqAnf ts [] (\ts' -> k =<< expr (App f' ts')))
     Let a x t s ->

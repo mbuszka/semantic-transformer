@@ -337,7 +337,7 @@ prettyTerm term = case term of
   App f ts ->
     parens (pretty f <> nested' 2 ts)
   Let _ x t b ->
-    parens ("let" <+> pretty x <> prettyBody (pretty t) (pretty b))
+    parens ("let" <> prettyBody (parens (brackets (aligned' [pretty x, pretty t]))) (pretty b))
   Case t ps ->
     parens ("match" <> prettyBody (pretty t) (pretty ps))
   Panic -> parens $ "error" <+> pretty (String @() "panic")

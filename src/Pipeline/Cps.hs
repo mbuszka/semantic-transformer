@@ -112,8 +112,9 @@ transformNormal tm k = case tm of
     k' <- term k
     pure Term {termTerm = App f (ts <> [k']), ..}
   SLet termLabel a x (Trivial t) b -> do
+    t' <- transformAtomic t
     b' <- transformNormal b k
-    pure Term {termTerm = Let a x t b', ..}
+    pure Term {termTerm = Let a x t' b', ..}
   SLet _ _ x t b -> do
     b' <- transformNormal b k
     let k' = Abs FunAnnot {funAtomic = False} $ scope [x] b'
