@@ -9,6 +9,7 @@ import Polysemy.State
 import Syntax hiding (ValueF (..), term)
 import qualified Syntax as Stx
 import Util
+import Util.Pretty
 import AbsInt.Types
 
 type Effs r = (Common r, VStore r, KStore r, Member NonDet r)
@@ -38,7 +39,9 @@ lookup env var dst = case env Map.!? var of
   Nothing -> gets (Map.member var . absIntGlobals) >>= \case
     True -> insertV dst (Global var)
     False -> case Map.lookup var Stx.primOps of
-      Nothing -> error $ "Unknown variable: " <> pshow var <> " at " <> pshow dst
+      Nothing -> do
+        pprint' $ prettyMap env
+        error $ "Unknown variable: " <> pshow var <> " at " <> pshow dst
       Just op -> insertV dst (PrimOp op)
 
 lookupWith :: (Member (Error Err) r, Ord k) => k -> Map k v -> Err -> Sem r v
@@ -68,7 +71,7 @@ eval env lbl k = term lbl >>= \case
     ts' <- traverse (aval env) ts
     apply lbl f' ts' k
   Let _ x t body -> do
-    k' <- insertK lbl (CLet env x body k)
+    k' <- insertK t (CLet env x body k)
     pure $ Eval env t k'
   Case t ps -> do
     v <- aval env t
@@ -133,9 +136,10 @@ matchAll _ _ _ = empty
 apply :: Effs r => Label -> ValuePtr -> [ValuePtr] -> ContPtr -> Sem r Config
 apply l f as k = derefV f >>= \case
   Closure env lbl -> term lbl >>= \case
-    Abs _ s ->
+    Abs _ s -> do
+      when (length (scopeVars s) /= length as) empty
       pure $ Eval (Map.fromList (scopeVars s `zip` as) <> env) (scopeBody s) k
-    t -> throw $ InternalError $ "Expected a lambda"
+    _ -> throw $ InternalError $ "Expected a lambda"
   Global x -> do
     Scope xs body <- gets ((Map.! x) . absIntGlobals)
     pure $ Eval (Map.fromList (fmap fst xs `zip` as)) body k
@@ -152,6 +156,7 @@ run c@(vStore, kStore, configs) = do
       oneOf configs >>= \case
         Eval env e k -> eval env e k
         Continue v k -> continue v k
+  -- pprint $ fmap toList $ Map.lookup (Label 135) $ unStore vStore
   let c' = (vStore', kStore', configs <> Set.fromList cs)
   if c == c' then pure vStore else run c'
   

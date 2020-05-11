@@ -14,7 +14,7 @@ import qualified Pipeline.Scope as Scope
 import Syntax as Stx
 import AbsInt
 import Util
--- import Util.Pretty
+import Util.Pretty
 
 data Defun
   = Defun
@@ -47,6 +47,7 @@ transform ::
   Members [FreshVar, FreshLabel, Error Err, Embed IO] r => Program Term -> Sem r (Program Term)
 transform program = do
   analysis <- AbsInt.run program
+  -- pprint' $ prettyMap $ fmap toList analysis
   let terms = programTerms program
   let s = initState terms analysis
   evalState s do

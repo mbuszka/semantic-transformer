@@ -59,7 +59,9 @@ runEffs Config {..} = do
   anf <- Anf.transform scoped
   when configDumpAnf do
     let anfFile = out </> srcName <> "-anf" <.> "rkt"
+    let anfDbg = out </> srcName <> "-dbg-anf" <.> "rkt"
     mkdir out
+    printDebug anfDbg anf
     printProgram anfFile anf
   cps <- if configSkipCps then pure anf else Cps.fromAnf anf
   when configDumpCps do

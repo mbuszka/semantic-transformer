@@ -31,7 +31,7 @@ data CT
 
 type Effs r = Members '[Error Err, State Cps, FreshVar, FreshLabel] r
 
-type Effs' r = Members '[Error Err, FreshVar, FreshLabel] r
+type Effs' r = Members '[Error Err, FreshVar, FreshLabel, Embed IO] r
 
 isAtomicFunction :: Effs r => AbsInt.Function -> Sem r Bool
 isAtomicFunction (AbsInt.Global v) = gets (preview $ #globals % ix v) >>= \case

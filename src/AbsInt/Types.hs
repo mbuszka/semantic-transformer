@@ -14,9 +14,9 @@ type Labeled = TermF Label
 
 type Env = Map Var ValuePtr
 
-newtype ValuePtr = ValuePtr {unValuePtr :: Label} deriving (Eq, Ord)
+newtype ValuePtr = ValuePtr {unValuePtr :: Label} deriving (Eq, Ord, Pretty)
 
-newtype ContPtr = ContPtr {unContPtr :: Label} deriving (Eq, Ord)
+newtype ContPtr = ContPtr {unContPtr :: Label} deriving (Eq, Ord, Pretty)
 
 data AbsInt
   = AbsInt
@@ -36,6 +36,10 @@ data Value
   | Boolean
   deriving (Eq, Ord)
 
+instance Pretty Value where
+  pretty (Closure _ l) = pretty l
+  pretty _ = mempty
+
 data Cont
   = CLet Env (Pattern Var) Label ContPtr
   | Halt
@@ -50,7 +54,7 @@ type VStore r = Member (State (Store Value)) r
 
 type KStore r = Member (State (Store Cont)) r
 
-type Common r = Members '[Error Err, State AbsInt, FreshLabel] r
+type Common r = Members '[Error Err, State AbsInt, FreshLabel, Embed IO] r
 
 newtype Store v = Store {unStore :: Map Label (Set v)}
   deriving (Eq, Ord)
