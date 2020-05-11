@@ -71,9 +71,9 @@ runEffs Config {..} = do
     printProgram cpsFile cps
     printDebug cpsDbg cps
   def <- if configSkipDefun then pure cps else Defun.transform cps
-  -- res <- traverse Inline.transform def
+  res <- traverse Inline.transform def
   mkdir out
-  printProgram resFile def -- res
+  printProgram resFile res
   pure ()
 
 mkdir :: Member (Embed IO) r => FilePath -> Sem r ()
