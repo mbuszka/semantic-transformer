@@ -48,7 +48,7 @@ check unwrap wrap env (DefFun {..}) = do
             App <$> go env f <*> traverse (go env) xs
         Let a x e s -> do
           wrap' term do
-            s' <- goS env (scope [x] s)
+            s' <- goS env (scope (patternVars x) s)
             Let a x <$> go env e <*> pure (scopeBody s')
         Case e ps -> do
           wrap' term do

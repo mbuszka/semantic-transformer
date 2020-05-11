@@ -7,7 +7,7 @@ import qualified Data.Set as Set
 import Optics
 import Polysemy.Error
 import Polysemy.State
-import Syntax hiding (Target (..), ValueF (..))
+import Syntax hiding (ValueF (..))
 import Util
 
 type Labeled = TermF Label
@@ -37,7 +37,7 @@ data Value
   deriving (Eq, Ord)
 
 data Cont
-  = CLet Env Var Label ContPtr
+  = CLet Env (Pattern Var) Label ContPtr
   | Halt
   deriving (Eq, Ord)
 

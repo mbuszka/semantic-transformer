@@ -7,7 +7,6 @@
 (provide def-data
          def-struct
          def
-         fun
          Integer
          String
          Boolean)
@@ -48,6 +47,7 @@
              #:with struct-def
              #'((struct tp (field.name ...) #:prefab)
                 (define c-name (struct/c tp field.contract ...)))))
+
   (define-syntax-class data-elem
     #:attributes (contract struct-def)
     (pattern tp:type
@@ -57,15 +57,46 @@
              #:with contract #'str.contract
              #:with struct-def #'str.struct-def))
 
-  (define-syntax-class def-arg
+  (define-syntax-class typed-arg
     (pattern name:id
              #:with contract #'any/c)
     (pattern [tp:type name:id]
              #:with contract #'tp.contract))
 
+  (define-syntax-class pat
+    (pattern (~literal _))
+    (pattern _:id)
+    (pattern (tp:type pat:pat ...))
+    (pattern _:string)
+    (pattern _:boolean)
+    (pattern _:integer))
+
+  (define-syntax-class statement
+    (pattern ((~literal let) ~! pat:pat t:term)
+             #:with term #'t.res))
+
+  (define-syntax-class statements
+    (pattern (~and (~var all) (lets:statement ... term:term))
+             #:with res (syntax/loc #'all (match-let* ([lets.pat lets.term] ...) term.res))))
+
+  (define-syntax-class term
+    (pattern (~and (~var all) ((~literal match) ~! t:term bs:branch ...))
+             #:with res (syntax/loc #'all (match t.res bs.res ...)))
+    (pattern (~and (~var all) ((~literal fun) ~! _:keyword ... (arg:id ...) . body:statements))
+             #:with res (syntax/loc #'all (lambda (arg ...) body.res)))
+    (pattern (~and (~var all) (f:term xs:term ...))
+             #:with res (syntax/loc #'all (f.res xs.res ...)))
+    (pattern res:string)
+    (pattern res:boolean)
+    (pattern res:integer)
+    (pattern res:id))
+
+  (define-syntax-class branch
+    (pattern (pat:pat . stmts:statements)
+             #:with res #'(pat stmts.res)))
+
   (define (tp->var stx)
     (datum->syntax stx (string->symbol (string-downcase (symbol->string (syntax->datum stx))))))
-  
   )
 
 (define-syntax (def-data stx)
@@ -86,15 +117,15 @@
 
 (define-syntax (def stx)
   (syntax-parse stx
-    [(_ name:id _:keyword ... (arg:def-arg ...) body)
+    [(_ name:id _:keyword ... (arg:typed-arg ...) . body:statements)
      #:with contract #'(-> arg.contract ... any/c)
      #'(begin
-         (define/contract (name arg.name ...) contract body))]))
+         (define/contract (name arg.name ...) contract body.res))]))
 
-(define-syntax (fun stx)
-  (syntax-parse stx
-    [(_ _:keyword ... (arg:id ...) body)
-     #'(lambda (arg ...) body)]))
+;(define-syntax (fun stx)
+;  (syntax-parse stx
+;    [(_ _:keyword ... (arg:id ...) . body:statements)
+;     #'(lambda (arg ...) body.res)]))
 
 (define-match-expander Integer
   (lambda (stx) (syntax-case stx () [(_ p) #'(? integer? p)])))

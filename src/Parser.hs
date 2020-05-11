@@ -73,33 +73,42 @@ parseTerm = mkTerm (parens expr <|> cons <|> variable)
   where
     variable = Var <$> var
     cons = Cons <$> parseValue parseTerm
-    expr = choice [lam, let', case', err, app]
+    expr = choice [lam, case', err, app]
     lam = keyword "fun" >> do
       as <- Set.fromList <$> many annot
       xs <- parens (many typed)
-      Abs (transformAnnots as) . Scope xs <$> parseTerm
-    let' = keyword "let" >> do
-      x <- var
-      lhs <- parseTerm
-      rhs <- parseTerm
-      pure $ Let (LetAnnot { letGenerated = False}) x lhs rhs
+      Abs (transformAnnots as) . Scope xs <$> parseBlock
     app = liftA2 App parseTerm (many parseTerm)
     case' = keyword "match" *> liftA2 Case parseTerm parsePatterns
     err = keyword "error" >> stringLiteral $> Panic
+
+parseBlock :: Parser SrcTerm
+parseBlock = try parseLet <|> parseTerm
+
+parseLet :: Parser SrcTerm
+parseLet = mkTerm do
+  (p, t) <- parens do
+    _ <- keyword "let"
+    p <- parsePattern
+    t <- parseTerm
+    pure (p, t)
+  rest <- parseBlock
+  pure $ Let (LetAnnot { letGenerated = False }) p t rest
 
 parsePatterns :: Parser (Patterns SrcTerm)
 parsePatterns = Patterns <$> many parseCase
 
 parseCase :: Parser (Pattern (), Scope SrcTerm)
 parseCase = parens $ do
-  (p, xs) <- extractNames <$> pattern
-  t <- parseTerm
+  (p, xs) <- extractNames <$> parsePattern
+  t <- parseBlock
   pure (p, scope xs t)
-  where
-    pattern =
+
+parsePattern :: Parser (Pattern Var)
+parsePattern =
       choice
         [ PWild <$ keyword "_",
-          PCons <$> parseValue pattern,
+          PCons <$> parseValue parsePattern,
           PVar <$> var,
           brackets $ PType <$> tp <*> var
         ]
@@ -122,7 +131,7 @@ parseFun = do
   x <- keyword "def" >> var
   as <- Set.fromList <$> many annot
   xs <- parens (many typed)
-  t <- parseTerm
+  t <- parseBlock
   pure $ DefFun x (transformAnnots as) (Scope xs t)
 
 transformAnnots :: Set Annot -> FunAnnot

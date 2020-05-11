@@ -3,6 +3,7 @@ module Pipeline (Config (..), run) where
 import Polysemy.Error
 import Syntax
 import Syntax.Source
+import Syntax.Pretty
 import Util
 import qualified Data.Text.IO as TIO
 import qualified Parser
@@ -20,6 +21,8 @@ data Config
   = Config
       { configSource :: FilePath,
         configOutputDir :: Maybe FilePath,
+        configSkipCps :: Bool,
+        configSkipDefun :: Bool,
         configDumpAnf :: Bool,
         configDumpCps :: Bool
       }
@@ -42,22 +45,33 @@ runEffs Config {..} = do
       resFile = out </> takeFileName configSource
   SrcProgram {..} <- fromEither $ Parser.run configSource txt
   let srcName = takeBaseName configSource
+  let printProgram :: Member (Embed IO) r => FilePath -> Program Term -> Sem r ()
+      printProgram file pgm = do
+        let p = pshow' $ prettyProgram pgm
+        embed . TIO.writeFile file $ srcPrologue <> p <> srcEpilogue
+      
+      printDebug :: Member (Embed IO) r => FilePath -> Program Term -> Sem r ()
+      printDebug file pgm = do
+        let p = pshow' $ debugProgram pgm
+        embed . TIO.writeFile file $ srcPrologue <> p <> srcEpilogue
   validated <- Structure.validate srcProgram
   scoped <- Scope.fromSource validated
   anf <- Anf.transform scoped
   when configDumpAnf do
     let anfFile = out </> srcName <> "-anf" <.> "rkt"
     mkdir out
-    embed $ TIO.writeFile anfFile (srcPrologue <> pshow anf <> srcEpilogue)
-  cps <- Cps.fromAnf anf
+    printProgram anfFile anf
+  cps <- if configSkipCps then pure anf else Cps.fromAnf anf
   when configDumpCps do
     let cpsFile = out </> srcName <> "-cps" <.> "rkt"
+    let cpsDbg = out </> srcName <> "-dbg-cps" <.> "rkt"
     mkdir out
-    embed $ TIO.writeFile cpsFile (srcPrologue <> pshow cps <> srcEpilogue)
-  def <- Defun.transform cps
-  res <- traverse Inline.transform def
+    printProgram cpsFile cps
+    printDebug cpsDbg cps
+  def <- if configSkipDefun then pure cps else Defun.transform cps
+  -- res <- traverse Inline.transform def
   mkdir out
-  embed $ TIO.writeFile resFile (srcPrologue <> pshow res <> srcEpilogue)
+  printProgram resFile def -- res
   pure ()
 
 mkdir :: Member (Embed IO) r => FilePath -> Sem r ()

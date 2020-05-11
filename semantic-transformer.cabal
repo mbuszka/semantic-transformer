@@ -43,9 +43,8 @@ library
     Parser
     Prelude
     Syntax
-    Syntax.Scoped
     Syntax.Source
-    Syntax.Term
+    Syntax.Pretty
     Util
     Util.Pretty
   

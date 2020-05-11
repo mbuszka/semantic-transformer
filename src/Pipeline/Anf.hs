@@ -25,7 +25,7 @@ atomic k tm = case tm of
   Expr e -> do
     v <- freshVar "var"
     body <- k =<< term (Var v)
-    term $ Let (LetAnnot {letGenerated = True}) v e body
+    term $ Let (LetAnnot {letGenerated = True}) (PVar v) e body
 
 toAnfValue :: Effs r => ValueF Term -> (Anf -> Sem r Term) -> Sem r Term
 toAnfValue v k = case v of

@@ -24,7 +24,7 @@ $(makeFieldLabels ''Cps)
 
 data CT
   = Trivial Term
-  | SLet Label LetAnnot Var CT CT
+  | SLet Label LetAnnot (Pattern Var) CT CT
   | SApp Label Term [Term]
   | SCase Label Term (Patterns CT)
   | SPanic Label
@@ -91,7 +91,7 @@ classify old@Term {..} =
       True -> trivial old
       False -> pure $ SApp termLabel f ts
     Let as x t b -> ((,) <$> classify t <*> classify b) >>= \case
-      (Trivial {}, Trivial {}) -> trivial old
+      -- (Trivial {}, Trivial {}) -> trivial old
       (t', b') -> pure $ SLet termLabel as x t' b'
     Case t ps -> do
       ps' <- traverse classify ps
@@ -107,7 +107,7 @@ transformNormal tm k = case tm of
     t' <- transformAtomic t
     v <- freshVar "val"
     body <- term =<< App <$> term k <*> traverse term [Var v]
-    term $ Let LetAnnot {letGenerated = True} v t' body
+    term $ Let LetAnnot {letGenerated = True} (PVar v) t' body
   SApp termLabel f ts -> do
     k' <- term k
     pure Term {termTerm = App f (ts <> [k']), ..}
@@ -115,9 +115,16 @@ transformNormal tm k = case tm of
     t' <- transformAtomic t
     b' <- transformNormal b k
     pure Term {termTerm = Let a x t' b', ..}
-  SLet _ _ x t b -> do
+  SLet _ _ (PVar x) t b -> do
     b' <- transformNormal b k
     let k' = Abs FunAnnot {funAtomic = False} $ scope [x] b'
+    transformNormal t k'
+  SLet _ _ p t b -> do
+    v <- freshVar "val"
+    b' <- transformNormal b k
+    let (pat, xs) = extractNames p
+    b'' <- term =<< Case <$> (term $ Var v) <*> pure (Patterns [(pat, scope xs b')])
+    let k' = Abs FunAnnot {funAtomic = False} $ scope [v] b''
     transformNormal t k'
   SCase termLabel t ps ->
     case k of
@@ -128,7 +135,7 @@ transformNormal tm k = case tm of
         k' <- freshVar "cont"
         ps' <- traverse (flip transformNormal (Var k')) ps
         let t' = Term {termTerm = Case t' ps', ..}
-        term =<< Let LetAnnot {letGenerated = True} k' <$> term k <*> pure t'
+        term =<< Let LetAnnot {letGenerated = True} (PVar k') <$> term k <*> pure t'
   SPanic termLabel -> pure Term {termTerm = Panic, ..}
 
 fromAnf :: Effs' r => Program Term -> Sem r (Program Term)

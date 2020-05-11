@@ -3,7 +3,7 @@ module AbsInt.Runner (runEffs) where
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Optics
-import Syntax hiding (Target (..), ValueF (..))
+import Syntax hiding (ValueF (..))
 import Polysemy.State
 import Polysemy.Error
 import Util

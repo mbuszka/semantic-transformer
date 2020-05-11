@@ -93,7 +93,9 @@ prim op vs = case (op, vs) of
 
 continue :: Effs r => ValuePtr -> ContPtr -> Sem r Config
 continue val k = derefK k >>= \case
-  CLet env var body k' -> pure $ Eval (Map.insert var val env) body k'
+  CLet env pattern body k' -> do
+    env' <- match env pattern val
+    pure $ Eval env' body k'
   Halt -> empty
 
 evalCase :: Effs r => Env -> ValuePtr -> Patterns Label -> ContPtr -> Sem r Config
@@ -133,7 +135,7 @@ apply l f as k = derefV f >>= \case
   Closure env lbl -> term lbl >>= \case
     Abs _ s ->
       pure $ Eval (Map.fromList (scopeVars s `zip` as) <> env) (scopeBody s) k
-    t -> throw $ InternalError $ "Expected a lambda, instead got:\n" <> pshow t
+    t -> throw $ InternalError $ "Expected a lambda"
   Global x -> do
     Scope xs body <- gets ((Map.! x) . absIntGlobals)
     pure $ Eval (Map.fromList (fmap fst xs `zip` as)) body k

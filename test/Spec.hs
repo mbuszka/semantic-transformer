@@ -17,6 +17,8 @@ main = do
       srcDir = "interpreters/src"
       configDumpAnf = True
       configDumpCps = True
+      configSkipCps = False
+      configSkipDefun = False
       configOutputDir = Just outDir
   sources <- listDirectory srcDir
   for_ sources $ \file -> do

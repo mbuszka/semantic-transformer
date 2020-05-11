@@ -14,6 +14,7 @@ import qualified Pipeline.Scope as Scope
 import Syntax as Stx
 import AbsInt
 import Util
+-- import Util.Pretty
 
 data Defun
   = Defun
@@ -28,7 +29,7 @@ data Defun
 
 $(makeFieldLabels ''Defun)
 
-type Effs r = Members [FreshVar, FreshLabel, State Defun, Error Err] r
+type Effs r = Members [FreshVar, FreshLabel, State Defun, Error Err, Embed IO] r
 
 initState :: Map Label Term -> Result -> Defun
 initState terms analysis =
@@ -43,7 +44,7 @@ initState terms analysis =
     }
 
 transform ::
-  Members [FreshVar, FreshLabel, Error Err] r => Program Term -> Sem r (Program Term)
+  Members [FreshVar, FreshLabel, Error Err, Embed IO] r => Program Term -> Sem r (Program Term)
 transform program = do
   analysis <- AbsInt.run program
   let terms = programTerms program
@@ -53,7 +54,7 @@ transform program = do
         wrap old fvs _ = do
           modify (over #fvs $ Map.insert (termLabel old) fvs)
           pure ()
-    Scope.checkProgram unwrap wrap program
+    _ <- Scope.checkProgram unwrap wrap program
     Program {..} <- traverse transform' program
     structs <- genStructs
     applys <- genApplys
@@ -99,7 +100,10 @@ genBody vs (PrimOp op) = do
   body <- term =<< App <$> (term $ Var v) <*> pure vs'
   pure (pat, scope [] body)
 genBody vs (Lambda l) = do
+  -- pprint' $ "generating body for" <+> pretty l
   (tag, fvs, Scope xs b) <- getLambda l
+  -- pprint' $ "bound vars: " <+> pretty (fmap fst xs)
+  -- pprint' $ "free vars:" <+> pretty fvs
   let p = PCons $ Stx.Record tag (fvs $> PVar ())
       b' = scope fvs (rename (Map.fromList (fmap fst xs `zip` vs)) b)
   pure (p, b')

@@ -18,11 +18,11 @@ transform' env Term {..} = case termTerm of
     Nothing -> term $ Var v
   Abs a s -> term . Abs a =<< transformS env s
   Case t ps -> term =<< (Case <$> transform' env t <*> transformP env ps)
-  Let LetAnnot {letGenerated = True} x t body -> do
+  Let LetAnnot {letGenerated = True} (PVar x) t body -> do
     t' <- transform' env t
     transform' (Map.insert x t' env) body
   Let a x t body -> do
-    term =<< (Let a x <$> transform' env t <*> transform' (Map.delete x env) body)
+    term =<< (Let a x <$> transform' env t <*> transform' (Map.restrictKeys env (patternVarsSet x)) body)
   t -> term =<< traverse (transform' env) t
 
 transformS :: Effs r => Map Var Term -> Scope Term -> Sem r (Scope Term)
