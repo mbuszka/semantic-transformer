@@ -15,23 +15,16 @@ main :: IO ()
 main = do
   let outDir = "interpreters/out"
       srcDir = "interpreters/src"
-      configDumpAnf = True
-      configDumpCps = True
+      configIntermediate = True
+      configDebug = True
+      configSelfTest = True
       configOutputDir = Just outDir
+      configCustom = Nothing
   sources <- listDirectory srcDir
   for_ sources $ \file -> do
-    putStrLn $ "Testing " <> file
     let configSource = srcDir </> file
-        res = outDir </> file
-        anf = outDir </> takeBaseName file <> "-anf.rkt"
-        cps = outDir </> takeBaseName file <> "-cps.rkt"
-        config = Config {..}
-    putStrLn =<< readProcess "raco" ["test", configSource] ""
-    maybeErr <- Pipeline.run config
+    maybeErr <- Pipeline.run Config {..}
     case maybeErr of
       Left err -> TIO.putStrLn err
-      Right () -> do
-        putStrLn =<< readProcess "raco" ["test", anf] ""
-        putStrLn =<< readProcess "raco" ["test", cps] ""
-        putStrLn =<< readProcess "raco" ["test", res] ""
+      Right () -> pure ()
     

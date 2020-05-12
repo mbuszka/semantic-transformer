@@ -3,10 +3,11 @@ module AbsInt.Runner (runEffs) where
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Optics
-import Syntax hiding (Target (..), ValueF (..))
+import Syntax hiding (ValueF (..))
 import Polysemy.State
 import Polysemy.Error
 import Util
+-- import Util.Pretty
 import AbsInt.Types
 import qualified AbsInt.Interpreter as Interpreter
 
@@ -32,6 +33,7 @@ buildStore datas structs = do
         dataName : (dataTypes >>= (either (const []) (\s -> [structName s])))
   tps <-
     alloc $ MkTp "Any" : Map.keys builtinTypes <> (datas >>= aux) <> fmap structName structs
+  -- pprint' $ prettyMap tps
   any <- getTp tps (MkTp "Any")
   let runData :: (Common r, VStore r) => DefData -> Sem r ()
       runData DefData {..} = do
@@ -56,7 +58,7 @@ buildStore datas structs = do
             insert l val
         for_ datas runData
         for_ structs runStruct
-        for_ (toList tps) \l -> do
+        for_ (toList (Map.delete (MkTp "Any") tps)) \l -> do
           copy (ValuePtr l) (unValuePtr any)
 
       go :: Common r => Store Value -> Sem r (Store Value)

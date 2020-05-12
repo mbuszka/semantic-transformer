@@ -34,13 +34,17 @@ Values:
   - Records with tags
 
 New approach: use racket as interpreter definition language:
-  - We can reuse the high level infrastructure:
-    + testing, repl, experimentation etc.
-  - The source file is split into three sections:
-    + prologue (with #lang, requires, provides etc.)
-    + the interpreter
-    + epilogue (optional) with tests and examples
-  - We can provide a macro for defining datatypes 
-    (generates structs and appropriate contracts)
-  - Possibly think about some interop (implemented as primitive functions)
-    with code using simple types (ints, strings, bools, defined datatypes)
+- We can reuse the high level infrastructure:
+  + testing, repl, experimentation etc.
+- The source file is split into three sections:
+  + prologue (with #lang, requires, provides etc.)
+  + the interpreter
+  + epilogue (optional) with tests and examples
+- We can provide a macro for defining datatypes 
+  (generates structs and appropriate contracts)
+- Possibly think about some interop (implemented as primitive functions)
+  with code using simple types (ints, strings, bools, defined datatypes)
+
+Statement oriented syntax:
+- def, fun, branch of match introduces a block
+- a block contains a list of statements terminated with an expression

@@ -7,16 +7,16 @@ import qualified Data.Set as Set
 import Optics
 import Polysemy.Error
 import Polysemy.State
-import Syntax hiding (Target (..), ValueF (..))
+import Syntax hiding (ValueF (..))
 import Util
 
 type Labeled = TermF Label
 
 type Env = Map Var ValuePtr
 
-newtype ValuePtr = ValuePtr {unValuePtr :: Label} deriving (Eq, Ord)
+newtype ValuePtr = ValuePtr {unValuePtr :: Label} deriving (Eq, Ord, Pretty)
 
-newtype ContPtr = ContPtr {unContPtr :: Label} deriving (Eq, Ord)
+newtype ContPtr = ContPtr {unContPtr :: Label} deriving (Eq, Ord, Pretty)
 
 data AbsInt
   = AbsInt
@@ -36,8 +36,12 @@ data Value
   | Boolean
   deriving (Eq, Ord)
 
+instance Pretty Value where
+  pretty (Closure _ l) = pretty l
+  pretty _ = mempty
+
 data Cont
-  = CLet Env Var Label ContPtr
+  = CLet Env (Pattern Var) Label ContPtr
   | Halt
   deriving (Eq, Ord)
 
@@ -50,7 +54,7 @@ type VStore r = Member (State (Store Value)) r
 
 type KStore r = Member (State (Store Cont)) r
 
-type Common r = Members '[Error Err, State AbsInt, FreshLabel] r
+type Common r = Members '[Error Err, State AbsInt, FreshLabel, Embed IO] r
 
 newtype Store v = Store {unStore :: Map Label (Set v)}
   deriving (Eq, Ord)

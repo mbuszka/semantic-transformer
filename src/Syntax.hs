@@ -22,6 +22,7 @@ module Syntax
     Tp (..),
     ValueF (..),
     Var (..),
+    defaultFunAnnot,
     extractNames,
     freshLabel,
     freshTag,
@@ -30,6 +31,8 @@ module Syntax
     insertNames,
     primOpNames,
     primOps,
+    patternVars,
+    patternVarsSet,
     programScopes,
     programTerms,
     runFreshLabel,
@@ -75,11 +78,15 @@ data StructField = FieldName Var | FieldType Tp | FieldBoth Tp Var
 
 data Annot
   = Atomic
+  | NoDefun
+  | DefunName Tp
   deriving (Eq, Ord)
 
 data FunAnnot
   = FunAnnot
-      { funAtomic :: Bool
+      { funDoCps :: Bool,
+        funDoDefun :: Bool,
+        funDefunName :: Maybe Tp
       }
 
 data LetAnnot
@@ -100,7 +107,7 @@ data TermF t
   = Var Var
   | Abs FunAnnot (Scope t)
   | App t [t]
-  | Let LetAnnot Var t t
+  | Let LetAnnot (Pattern Var) t t
   | Case t (Patterns t)
   | Cons (ValueF t)
   | Panic
@@ -158,21 +165,22 @@ instance Bound t => Bound (TermF t) where
   freeVars term = case term of
     Var v -> Set.singleton v
     Abs _ s -> freeVars s
-    Let _ x t s -> freeVars t <> (Set.delete x $ freeVars s)
+    Let _ x t s -> freeVars t <> (freeVars s Set.\\ patternVarsSet x)
     Case t ps -> freeVars t `Set.union` freeVars ps
     _ -> foldMap freeVars term
 
   allVars term = case term of
     Var v -> Set.singleton v
     Abs _ s -> allVars s
-    Let _ x t s -> Set.singleton x <> allVars t <> allVars s
+    Let _ x t s -> patternVarsSet x <> allVars t <> allVars s
     Case t ps -> allVars t <> allVars ps
     _ -> foldMap allVars term
 
   rename vars term = case term of
     Var v -> Var $ Map.findWithDefault v v vars
     Abs a s -> Abs a $ rename vars s
-    Let a x t s -> Let a x (rename vars t) (rename (Map.delete x vars) s)
+    Let a x t s ->
+      Let a x (rename vars t) (rename (Map.withoutKeys vars (patternVarsSet x)) s)
     Case t ps -> Case (rename vars t) (rename vars ps)
     _ -> fmap (rename vars) term
 
@@ -198,6 +206,13 @@ instance Bound Term where
   rename vars Term {..} = Term {termTerm = rename vars termTerm, ..}
 
 -- Pattern helpers
+
+patternVarsSet :: Pattern Var -> Set Var
+patternVarsSet p = foldMap Set.singleton p
+
+patternVars :: Pattern Var -> [Var]
+patternVars = toList
+
 extractNames :: Pattern Var -> (Pattern (), [Var])
 extractNames p = (p $> (), toList p)
 
@@ -216,6 +231,9 @@ mkVar :: Text -> Var
 mkVar = MkVar
 
 -- Other helpers
+defaultFunAnnot :: FunAnnot
+defaultFunAnnot = FunAnnot {funDoCps = True, funDoDefun = True, funDefunName = Nothing}
+
 scope :: [Var] -> t -> Scope t
 scope vs = Scope (fmap (,Nothing) vs)
 
@@ -259,95 +277,95 @@ primOpNames = Map.fromList $ fmap swap $ Map.toList primOps
 
 -- Pretty printing
 
-instance Pretty Term where
-  pretty Term {..} = {- pretty termLabel <> "#" <> -} pretty termTerm
+-- instance Pretty Term where
+--   pretty Term {..} = {- pretty termLabel <> "#" <> -} pretty termTerm
 
-instance Pretty (Pattern Var) where
-  pretty (PVar v) = pretty v
-  pretty (PType tp v) = brackets $ pretty tp <+> pretty v
-  pretty PWild = "_"
-  pretty (PCons r) = pretty r
+-- instance Pretty (Pattern Var) where
+--   pretty (PVar v) = pretty v
+--   pretty (PType tp v) = brackets $ pretty tp <+> pretty v
+--   pretty PWild = "_"
+--   pretty (PCons r) = pretty r
 
-instance Pretty t => Pretty (TermF t) where
-  pretty = prettyTerm
+-- instance Pretty t => Pretty (TermF t) where
+--   pretty = prettyTerm
 
-instance Pretty Annot where
-  pretty Atomic = "#:atomic"
+-- instance Pretty Annot where
+--   pretty Atomic = "#:atomic"
 
-instance Pretty t => Pretty (Program t) where
-  pretty Program {..} =
-    types <> hardline <> main <> hardline <> defs <> hardline <> structs
-    where
-      defs = rows $ fmap (\d -> pretty d <> hardline) programDefinitions
-      types = rows $ fmap (\t -> pretty t <> hardline) programDatatypes
-      main = pretty programMain
-      structs = rows $ programStructs <&> \s -> parens ("def-struct" <+> pretty s)
+-- instance Pretty t => Pretty (Program t) where
+--   pretty Program {..} =
+--     types <> hardline <> main <> hardline <> defs <> hardline <> structs
+--     where
+--       defs = rows $ fmap (\d -> pretty d <> hardline) programDefinitions
+--       types = rows $ fmap (\t -> pretty t <> hardline) programDatatypes
+--       main = pretty programMain
+--       structs = rows $ programStructs <&> \s -> parens ("def-struct" <+> pretty s)
 
-instance Pretty t => Pretty (DefFun t) where
-  pretty DefFun {..} =
-    parens $ "def" <+> pretty funName <> prettyBody (variables vs) (pretty body)
-    where
-      Scope vs body = funScope
+-- instance Pretty t => Pretty (DefFun t) where
+--   pretty DefFun {..} =
+--     parens $ "def" <+> pretty funName <> prettyBody (variables vs) (pretty body)
+--     where
+--       Scope vs body = funScope
 
-instance Pretty DefData where
-  pretty DefData {..} =
-    parens $ "def-data" <+> pretty dataName <> nested 2 types
-    where
-      types = rows $ fmap (either pretty pretty) dataTypes
+-- instance Pretty DefData where
+--   pretty DefData {..} =
+--     parens $ "def-data" <+> pretty dataName <> nested 2 types
+--     where
+--       types = rows $ fmap (either pretty pretty) dataTypes
 
-instance Pretty v => Pretty (ValueF v) where
-  pretty (Number n) = pretty n
-  pretty (String s) = escape s
-  pretty (Record c ts) = braces (pretty c <> (nested' 2 ts))
-  pretty (Boolean True) = "#t"
-  pretty (Boolean False) = "#f"
+-- instance Pretty v => Pretty (ValueF v) where
+--   pretty (Number n) = pretty n
+--   pretty (String s) = escape s
+--   pretty (Record c ts) = braces (pretty c <> (nested' 2 ts))
+--   pretty (Boolean True) = "#t"
+--   pretty (Boolean False) = "#f"
 
-instance Pretty t => Pretty (Patterns t) where
-  pretty (Patterns ps) = case ps of
-    [] -> mempty
-    [p] -> pat p
-    _ -> rows . fmap pat $ ps
-    where
-      pat (p, Scope vs t) =
-        parens (pretty (insertNames p . fmap fst $ vs) <> nested 1 (pretty t))
+-- instance Pretty t => Pretty (Patterns t) where
+--   pretty (Patterns ps) = case ps of
+--     [] -> mempty
+--     [p] -> pat p
+--     _ -> rows . fmap pat $ ps
+--     where
+--       pat (p, Scope vs t) =
+--         parens (pretty (insertNames p . fmap fst $ vs) <> nested 1 (pretty t))
 
-instance Pretty t => Pretty (Scope t) where
-  pretty (Scope xs t) = variables xs <+> pretty t
+-- instance Pretty t => Pretty (Scope t) where
+--   pretty (Scope xs t) = variables xs <+> pretty t
 
-instance Pretty StructField where
-  pretty (FieldName v) = pretty v
-  pretty (FieldType t) = pretty t
-  pretty (FieldBoth t v) = brackets $ pretty t <+> pretty v
+-- instance Pretty StructField where
+--   pretty (FieldName v) = pretty v
+--   pretty (FieldType t) = pretty t
+--   pretty (FieldBoth t v) = brackets $ pretty t <+> pretty v
 
-instance Pretty DefStruct where
-  pretty DefStruct {..} =
-    braces $ pretty structName <+> aligned structFields
+-- instance Pretty DefStruct where
+--   pretty DefStruct {..} =
+--     braces $ pretty structName <+> aligned structFields
 
 instance Pretty PrimOp where
   pretty op =
     let ops = Map.fromList . fmap swap . Map.toList $ primOps
      in pretty $ ops Map.! op
 
-prettyTerm :: Pretty t => TermF t -> Doc ann
-prettyTerm term = case term of
-  Var v -> pretty v
-  Cons v -> pretty v
-  Abs _ (Scope vs t) ->
-    parens ("fun" <> prettyBody (variables vs) (pretty t))
-  App f ts ->
-    parens (pretty f <> nested' 2 ts)
-  Let _ x t b ->
-    parens ("let" <> prettyBody (parens (brackets (aligned' [pretty x, pretty t]))) (pretty b))
-  Case t ps ->
-    parens ("match" <> prettyBody (pretty t) (pretty ps))
-  Panic -> parens $ "error" <+> pretty (String @() "panic")
+-- prettyTerm :: Pretty t => TermF t -> Doc ann
+-- prettyTerm term = case term of
+--   Var v -> pretty v
+--   Cons v -> pretty v
+--   Abs _ (Scope vs t) ->
+--     parens ("fun" <> prettyBody (variables vs) (pretty t))
+--   App f ts ->
+--     parens (pretty f <> nested' 2 ts)
+--   Let _ x t b ->
+--     parens ("let" <> prettyBody (parens (brackets (aligned' [pretty x, pretty t]))) (pretty b))
+--   Case t ps ->
+--     parens ("match" <> prettyBody (pretty t) (pretty ps))
+--   Panic -> parens $ "error" <+> pretty (String @() "panic")
 
-variable :: (Var, Maybe Tp) -> Doc ann
-variable (v, Nothing) = pretty v
-variable (v, Just tp) = brackets . aligned' $ [pretty tp, pretty v]
+-- variable :: (Var, Maybe Tp) -> Doc ann
+-- variable (v, Nothing) = pretty v
+-- variable (v, Just tp) = brackets . aligned' $ [pretty tp, pretty v]
 
-variables :: [(Var, Maybe Tp)] -> Doc ann
-variables = parens . aligned' . fmap variable
+-- variables :: [(Var, Maybe Tp)] -> Doc ann
+-- variables = parens . aligned' . fmap variable
 
 -- Fresh variable generation
 

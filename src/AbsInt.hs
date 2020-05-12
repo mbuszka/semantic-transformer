@@ -44,7 +44,7 @@ lookup l res = case Map.lookup l res of
   Nothing -> throw $ InternalError $ "No analysis result for label: " <> pshow l
   Just fs -> pure fs 
 
-run :: Members '[Error Err, FreshLabel] r => Program Term -> Sem r Result
+run :: Members '[Error Err, FreshLabel, Embed IO] r => Program Term -> Sem r Result
 run program = do
   let absIntGlobals = Map.empty
       absIntTerms = Map.empty

@@ -37,15 +37,14 @@ library
     Pipeline.Anf
     Pipeline.Cps
     Pipeline.Defun
-    Pipeline.Inline
+    Pipeline.InlineLet
     Pipeline.Scope
     Pipeline.Structure
     Parser
     Prelude
     Syntax
-    Syntax.Scoped
     Syntax.Source
-    Syntax.Term
+    Syntax.Pretty
     Util
     Util.Pretty
   
@@ -88,6 +87,7 @@ library
     , polysemy
     , polysemy-plugin
     , prettyprinter
+    , process
     , text
     , transformers
   

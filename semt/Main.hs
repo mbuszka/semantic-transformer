@@ -21,8 +21,10 @@ parseConfig :: Parser Config
 parseConfig = Config
   <$> argument str (metavar "FILE" <> help "Source file with the interpreter")
   <*> optional (strOption (short 'o' <> long "output" <> metavar "DIR" <> help "Output directory for generated files, defaults to ./out/"))
-  <*> switch (long "dump-anf" <> help "Dump program after transformation to administrative normal form")
-  <*> switch (long "dump-cps" <> help "Dump program after transformation to continuation passing style")
+  <*> switch (long "intermediate" <> short 'i' <> help "Emit executable source files for each stage")
+  <*> switch (long "debug" <> short 'd' <> help "Emit labeled source files for each stage")
+  <*> switch (long "self-test" <> short 't' <> help "Run raco test on each intermediate file; implies --intermediate")
+  <*> pure Nothing
 
 desc :: InfoMod a
 desc = fullDesc

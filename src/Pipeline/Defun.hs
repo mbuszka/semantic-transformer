@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -6,29 +7,29 @@ module Pipeline.Defun
   )
 where
 
+import AbsInt
 import qualified Data.Map as Map
 import Optics
 import Polysemy.Error
-import Polysemy.State
 import qualified Pipeline.Scope as Scope
+import Polysemy.State
 import Syntax as Stx
-import AbsInt
 import Util
+import Util.Pretty
 
-data Defun
-  = Defun
-      { defunTerms :: Map Label Term,
-        defunApplys :: Map (Set Function) (Var, [Var]),
-        defunGlobals :: Map Var Tp,
-        defunPrimOps :: Map Var Tp,
-        defunAnalysis :: Result,
-        defunLambdas :: Map Label (Tp, [Var], Scope Term),
-        defunFvs :: Map Label Fvs
-      }
+data Defun = Defun
+  { defunTerms :: Map Label Term,
+    defunApplys :: Map (Set Function) (Var, [Var]),
+    defunGlobals :: Map Var Tp,
+    defunPrimOps :: Map Var Tp,
+    defunAnalysis :: Result,
+    defunLambdas :: Map Label (Tp, [Var], Scope Term),
+    defunFvs :: Map Label Fvs
+  }
 
 $(makeFieldLabels ''Defun)
 
-type Effs r = Members [FreshVar, FreshLabel, State Defun, Error Err] r
+type Effs r = Members [FreshVar, FreshLabel, State Defun, Error Err, Embed IO] r
 
 initState :: Map Label Term -> Result -> Defun
 initState terms analysis =
@@ -42,10 +43,23 @@ initState terms analysis =
       defunFvs = Map.empty
     }
 
+noDefun :: Effs r => Function -> Sem r Bool
+noDefun (Lambda l) = gets (defunTerms) <&> Map.lookup l >>= \case
+  Just Term {termTerm = Abs FunAnnot {..} _} -> pure $ not funDoDefun
+  _ -> throw $ InternalError "Term not found"
+noDefun _ = pure True
+
+doDefun :: Effs r => Function -> Sem r Bool
+doDefun (Lambda l) = gets (defunTerms) <&> Map.lookup l >>= \case
+  Just Term {termTerm = Abs FunAnnot {..} _} -> pure $ funDoDefun
+  _ -> throw $ InternalError "Term not found"
+doDefun _ = pure True
+
 transform ::
-  Members [FreshVar, FreshLabel, Error Err] r => Program Term -> Sem r (Program Term)
+  Members [FreshVar, FreshLabel, Error Err, Embed IO] r => Program Term -> Sem r (Program Term)
 transform program = do
   analysis <- AbsInt.run program
+  -- pprint' $ prettyMap $ fmap toList analysis
   let terms = programTerms program
   let s = initState terms analysis
   evalState s do
@@ -53,7 +67,7 @@ transform program = do
         wrap old fvs _ = do
           modify (over #fvs $ Map.insert (termLabel old) fvs)
           pure ()
-    Scope.checkProgram unwrap wrap program
+    _ <- Scope.checkProgram unwrap wrap program
     Program {..} <- traverse transform' program
     structs <- genStructs
     applys <- genApplys
@@ -81,7 +95,7 @@ genApplys = do
     (cases, (name, f : vs)) -> do
       ps <- traverse (genBody vs) (toList cases)
       b <- term =<< Case <$> (term $ Var f) <*> pure (Patterns ps)
-      pure $ DefFun name FunAnnot {funAtomic=False} (scope (f : vs) b)
+      pure $ DefFun name defaultFunAnnot (scope (f : vs) b)
     _ -> error "Uh oh"
 
 genBody :: Effs r => [Var] -> Function -> Sem r (Pattern (), Scope Term)
@@ -99,7 +113,10 @@ genBody vs (PrimOp op) = do
   body <- term =<< App <$> (term $ Var v) <*> pure vs'
   pure (pat, scope [] body)
 genBody vs (Lambda l) = do
+  -- pprint' $ "generating body for" <+> pretty l
   (tag, fvs, Scope xs b) <- getLambda l
+  -- pprint' $ "bound vars: " <+> pretty (fmap fst xs)
+  -- pprint' $ "free vars:" <+> pretty fvs
   let p = PCons $ Stx.Record tag (fvs $> PVar ())
       b' = scope fvs (rename (Map.fromList (fmap fst xs `zip` vs)) b)
   pure (p, b')
@@ -144,17 +161,31 @@ transform' tm = case termTerm tm of
           term =<< App <$> (term $ Var v) <*> pure xs'
       _ -> do
         f' <- transform' f
-        apply <- getApply f (length xs)
-        term =<< App <$> (term . Var $ apply) <*> pure (f' : xs')
+        fs <- getFuns (termLabel f)
+        nd <- all noDefun fs
+        dd <- all doDefun fs
+        if  | nd -> term $ App f' xs'
+            | dd -> do
+              apply <- getApply f (length xs)
+              term =<< App <$> (term . Var $ apply) <*> pure (f' : xs')
+            | otherwise ->
+              throw $ InternalError $
+                "Inconsitent defunctionalization requirements of lambdas at " <> pshow (termLabel f)
   t -> traverse transform' t >>= transformL (termLabel tm)
 
 transformL :: Effs r => Label -> TermF Term -> Sem r Term
 transformL label tm = case tm of
-  Abs _ s -> do
-    fvs <- getFvs label <&> Map.filter (==RefLocal) <&> Map.keysSet <&> toList
-    tag <- freshTag "Lambda"
-    modify' $ over #lambdas (Map.insert label (tag, fvs, s))
-    term =<< Cons <$> (Stx.Record tag <$> traverse (term . Var) fvs)
+  Abs as s -> do
+    nd <- noDefun (Lambda label)
+    if nd
+      then pure $ Term {termLabel = label, termTerm = tm}
+      else do
+        fvs <- getFvs label <&> Map.filter (== RefLocal) <&> Map.keysSet <&> toList
+        tag <- case funDefunName as of
+          Nothing -> freshTag "Lambda"
+          Just t -> pure t
+        modify' $ over #lambdas (Map.insert label (tag, fvs, s))
+        term =<< Cons <$> (Stx.Record tag <$> traverse (term . Var) fvs)
   Var v -> do
     fvs <- getFvs label
     case fvs Map.! v of
