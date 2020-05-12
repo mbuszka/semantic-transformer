@@ -36,10 +36,10 @@ type Effs' r = Members '[Error Err, FreshVar, FreshLabel, Embed IO] r
 isAtomicFunction :: Effs r => AbsInt.Function -> Sem r Bool
 isAtomicFunction (AbsInt.Global v) = gets (preview $ #globals % ix v) >>= \case
   Nothing -> throw $ InternalError $ "Unknown top-level function: " <> pshow v
-  Just as -> pure $ funAtomic as
+  Just as -> pure $ not $ funDoCps as
 isAtomicFunction (AbsInt.PrimOp _) = pure True
 isAtomicFunction (AbsInt.Lambda l) = gets (preview $ #terms % ix l) >>= \case
-  Just (Term {termTerm=Abs as _}) -> pure $ funAtomic as
+  Just (Term {termTerm=Abs as _}) -> pure $ not $ funDoCps as
   _ -> throw $ InternalError $ "Not a label for lambda" <> pshow l
 
 isAtomic :: Effs r => Term -> Sem r Bool
@@ -62,10 +62,10 @@ transformAtomic tm = case termTerm tm of
         if b'
           then do
             v <- freshVar "x"
-            k <- term =<< Abs FunAnnot {funAtomic = False} . scope [v] <$> term (Var v)
+            k <- term =<< Abs defaultFunAnnot . scope [v] <$> term (Var v)
             pure tm {termTerm = App f (ts <> [k])}
           else throw $ InternalError $ "Application of both cps and non-cps functions"
-  Abs a s | funAtomic a ->
+  Abs a s | not $ funDoCps a ->
     term . Abs a =<< traverse transformAtomic s
   Abs a (Scope xs t) -> do
     k' <- freshVar "cont"
@@ -117,14 +117,14 @@ transformNormal tm k = case tm of
     pure Term {termTerm = Let a x t' b', ..}
   SLet _ _ (PVar x) t b -> do
     b' <- transformNormal b k
-    let k' = Abs FunAnnot {funAtomic = False} $ scope [x] b'
+    let k' = Abs defaultFunAnnot $ scope [x] b'
     transformNormal t k'
   SLet _ _ p t b -> do
     v <- freshVar "val"
     b' <- transformNormal b k
     let (pat, xs) = extractNames p
     b'' <- term =<< Case <$> (term $ Var v) <*> pure (Patterns [(pat, scope xs b')])
-    let k' = Abs FunAnnot {funAtomic = False} $ scope [v] b''
+    let k' = Abs defaultFunAnnot $ scope [v] b''
     transformNormal t k'
   SCase termLabel t ps ->
     case k of
@@ -150,7 +150,7 @@ fromAnf p@Program {..} = do
   where
     aux :: Effs r => DefFun Term -> Sem r (DefFun Term)
     aux d@DefFun {funScope = Scope xs t, ..} =
-      if funAtomic funAnnot
+      if not $ funDoCps funAnnot
         then traverse transformAtomic d
         else do
           k <- freshVar "cont"

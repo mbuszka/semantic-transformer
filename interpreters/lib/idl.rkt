@@ -57,6 +57,11 @@
              #:with contract #'str.contract
              #:with struct-def #'str.struct-def))
 
+  (define-splicing-syntax-class kw-arg
+    (pattern (~seq _:keyword _:type))
+    (pattern _:keyword)
+    )
+
   (define-syntax-class typed-arg
     (pattern name:id
              #:with contract #'any/c)
@@ -82,7 +87,7 @@
   (define-syntax-class term
     (pattern (~and (~var all) ((~literal match) ~! t:term bs:branch ...))
              #:with res (syntax/loc #'all (match t.res bs.res ...)))
-    (pattern (~and (~var all) ((~literal fun) ~! _:keyword ... (arg:id ...) . body:statements))
+    (pattern (~and (~var all) ((~literal fun) ~! _:kw-arg ... (arg:id ...) . body:statements))
              #:with res (syntax/loc #'all (lambda (arg ...) body.res)))
     (pattern (~and (~var all) (f:term xs:term ...))
              #:with res (syntax/loc #'all (f.res xs.res ...)))

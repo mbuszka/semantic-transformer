@@ -37,7 +37,7 @@ library
     Pipeline.Anf
     Pipeline.Cps
     Pipeline.Defun
-    Pipeline.Inline
+    Pipeline.InlineLet
     Pipeline.Scope
     Pipeline.Structure
     Parser
@@ -87,6 +87,7 @@ library
     , polysemy
     , polysemy-plugin
     , prettyprinter
+    , process
     , text
     , transformers
   

@@ -37,7 +37,7 @@
      {Pair next {Heap (+ next 1) (insert contents next value)}})))
 
 (def insert #:atomic (store location value)
-  (fun (loc) (match (eq? loc location) (#t value) (#f (store loc)))))
+  (fun #:no-defun #:atomic (loc) (match (eq? loc location) (#t value) (#f (store loc)))))
 
 (def nth ([Env env] [Integer n])
   (match env
@@ -68,7 +68,7 @@
     ))
 
 (def main ([Term term])
-  (let {Pair res _} (eval term {Nil} {Heap 0 (fun (loc) (error "empty heap"))}))
+  (let {Pair res _} (eval term {Nil} {Heap 0 (fun #:no-defun #:atomic (loc) (error "empty heap"))}))
   res)
 
 ; end interpreter

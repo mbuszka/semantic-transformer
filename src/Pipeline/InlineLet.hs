@@ -1,4 +1,4 @@
-module Pipeline.Inline
+module Pipeline.InlineLet
   ( transform
   )
 where
@@ -22,7 +22,7 @@ transform' env Term {..} = case termTerm of
     t' <- transform' env t
     transform' (Map.insert x t' env) body
   Let a x t body -> do
-    term =<< (Let a x <$> transform' env t <*> transform' (Map.restrictKeys env (patternVarsSet x)) body)
+    term =<< (Let a x <$> transform' env t <*> transform' (Map.withoutKeys env (patternVarsSet x)) body)
   t -> term =<< traverse (transform' env) t
 
 transformS :: Effs r => Map Var Term -> Scope Term -> Sem r (Scope Term)

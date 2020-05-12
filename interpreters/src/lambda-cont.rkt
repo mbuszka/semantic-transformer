@@ -24,15 +24,15 @@
   (match term
     ([Integer n] (k n))
     ([String x] (k (env x)))
-    ({Lam x body} (k (fun (val k) (eval body (extend env x val) k))))
-    ({App fn arg} (eval fn env (fun (fn) (eval arg env (fun (arg) (fn arg k))))))
-    ({Succ t} (eval t env (fun (n) (k (+ n 1)))))
-    ({Reset t} (eval t env (fun (v) v)))
+    ({Lam x body} (k (fun #:name F-Clo (val k) (eval body (extend env x val) k))))
+    ({App fn arg} (eval fn env (fun #:name K-Arg (fn) (eval arg env (fun #:name K-App (arg) (fn arg k))))))
+    ({Succ t} (eval t env (fun #:name K-Succ (n) (k (+ n 1)))))
+    ({Reset t} (eval t env (fun #:name K-Reset (v) v)))
     ({Shift k1 t}
-      (let c (fun (v k1) (k1 (k v))))
-      (eval t (extend env k1 c) (fun (v) v)))))
+      (let c (fun #:name F-Cont (v k1) (k1 (k v))))
+      (eval t (extend env k1 c) (fun #:name K-Shift (v) v)))))
 
-(def main ([Term term]) (eval term init (fun (v) v)))
+(def main ([Term term]) (eval term init (fun #:name K-Halt (v) v)))
 
 ; end interpreter
 

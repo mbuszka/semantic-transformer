@@ -22,6 +22,7 @@ module Syntax
     Tp (..),
     ValueF (..),
     Var (..),
+    defaultFunAnnot,
     extractNames,
     freshLabel,
     freshTag,
@@ -77,11 +78,15 @@ data StructField = FieldName Var | FieldType Tp | FieldBoth Tp Var
 
 data Annot
   = Atomic
+  | NoDefun
+  | DefunName Tp
   deriving (Eq, Ord)
 
 data FunAnnot
   = FunAnnot
-      { funAtomic :: Bool
+      { funDoCps :: Bool,
+        funDoDefun :: Bool,
+        funDefunName :: Maybe Tp
       }
 
 data LetAnnot
@@ -226,6 +231,9 @@ mkVar :: Text -> Var
 mkVar = MkVar
 
 -- Other helpers
+defaultFunAnnot :: FunAnnot
+defaultFunAnnot = FunAnnot {funDoCps = True, funDoDefun = True, funDefunName = Nothing}
+
 scope :: [Var] -> t -> Scope t
 scope vs = Scope (fmap (,Nothing) vs)
 

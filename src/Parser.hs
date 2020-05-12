@@ -93,7 +93,7 @@ parseLet = mkTerm do
     t <- parseTerm
     pure (p, t)
   rest <- parseBlock
-  pure $ Let (LetAnnot { letGenerated = False }) p t rest
+  pure $ Let (LetAnnot {letGenerated = False}) p t rest
 
 parsePatterns :: Parser (Patterns SrcTerm)
 parsePatterns = Patterns <$> many parseCase
@@ -106,12 +106,12 @@ parseCase = parens $ do
 
 parsePattern :: Parser (Pattern Var)
 parsePattern =
-      choice
-        [ PWild <$ keyword "_",
-          PCons <$> parseValue parsePattern,
-          PVar <$> var,
-          brackets $ PType <$> tp <*> var
-        ]
+  choice
+    [ PWild <$ keyword "_",
+      PCons <$> parseValue parsePattern,
+      PVar <$> var,
+      brackets $ PType <$> tp <*> var
+    ]
 
 parseValue :: Parser v -> Parser (ValueF v)
 parseValue subTerm =
@@ -124,7 +124,12 @@ parseValue subTerm =
     ]
 
 annot :: Parser Annot
-annot = keyword "#:atomic" >> pure Atomic
+annot =
+  choice
+    [ keyword "#:atomic" $> Atomic,
+      keyword "#:no-defun" $> NoDefun,
+      keyword "#:name" >> tp <&> DefunName
+    ]
 
 parseFun :: Parser (DefFun SrcTerm)
 parseFun = do
@@ -135,7 +140,18 @@ parseFun = do
   pure $ DefFun x (transformAnnots as) (Scope xs t)
 
 transformAnnots :: Set Annot -> FunAnnot
-transformAnnots as = FunAnnot {funAtomic = Set.member Atomic as}
+transformAnnots as =
+  let funDoCps = Set.notMember Atomic as
+      funDoDefun = Set.notMember NoDefun as
+      funDefunName =
+        as
+          & toList
+            >>= ( \case
+                    DefunName n -> [n]
+                    _ -> []
+                )
+          & listToMaybe
+   in FunAnnot {..}
 
 parseData :: Parser DefData
 parseData = do
@@ -190,7 +206,6 @@ tp = MkTp <$> lexeme text
 
 keyword :: Text -> Parser Text
 keyword s = lexeme $ try (string s <* notFollowedBy (satisfy identRest))
-  
 
 stringLiteral :: Parser Text
 stringLiteral =
