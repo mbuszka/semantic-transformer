@@ -4,7 +4,7 @@ module Syntax.Pretty
   )
 where
 
-import Syntax hiding (term)
+import Syntax
 import Util.Pretty
 
 data Options = Options {addLabels :: Bool}

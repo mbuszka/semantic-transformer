@@ -30,12 +30,12 @@ validate topLevels = do
   B {..} <- aux topLevels $ B empty empty Nothing empty
   case main of
     Nothing -> throwMsg "No main in file"
-    Just main -> do
+    Just m -> do
       let pgm =
             Program
               { programDefinitions = values definitions,
                 programDatatypes = values datatypes,
-                programMain = main,
+                programMain = m,
                 programStructs = values structs
               }
           f SrcTerm {..} = do
