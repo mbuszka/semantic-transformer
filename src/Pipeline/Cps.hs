@@ -136,10 +136,10 @@ transformNormal k txt tm = case tm of
     name <- freshTag $ fromMaybe "Cont" txt
     let k' = Abs defaultFunAnnot {funDefunName = Just name} [x] b'
     transformNormal k' txt t
-  SLet _ _ p t b -> do
+  SLet _ a p t b -> do
     v <- freshVar "val"
     b' <- transformNormal k txt b
-    b'' <- mkTerm' =<< Case <$> (mkTerm' $ Var v) <*> pure (Branch p b' BNil)
+    b'' <- mkTerm' =<< Let a p <$> mkTerm' (Var v) <*> pure b'
     name <- freshTag $ fromMaybe "Cont" txt
     let k' = Abs defaultFunAnnot {funDefunName = Just name} [v] b''
     transformNormal k' txt t
