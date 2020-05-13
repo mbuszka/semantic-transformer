@@ -78,9 +78,9 @@ genStructs ::
 genStructs = do
   lambdas <- gets (toListOf $ #lambdas % folded)
   globals <- gets (toListOf $ #globals % folded)
-  primOps <- gets (toListOf $ #primOps % folded)
+  prims <- gets (toListOf $ #primOps % folded)
   let ls = lambdas <&> \case (name, fields, _, _) -> DefStruct name (fmap FieldName fields)
-      xs = globals <> primOps <&> \tag -> DefStruct tag []
+      xs = globals <> prims <&> \tag -> DefStruct tag []
   pure $ ls <> xs
 
 genApplys :: Effs r => Sem r [DefFun Term]
