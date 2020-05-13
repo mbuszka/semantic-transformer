@@ -11,7 +11,7 @@ import Optics
 import Polysemy.Error
 import Polysemy.State
 import Syntax
-import Util
+import Common
 
 data Cps
   = Cps
@@ -24,10 +24,10 @@ $(makeFieldLabels ''Cps)
 
 data CT
   = Trivial Term
-  | SLet Label LetAnnot (Pattern Var) CT CT
+  | SLet Label LetAnnot Pattern CT CT
   | SApp Label Term [Term]
-  | SCase Label Term (Patterns CT)
-  | SPanic Label
+  | SCase Label Term (Branches CT)
+  | SPanic Label Text
 
 type Effs r = Members '[Error Err, State Cps, FreshVar, FreshLabel] r
 
@@ -35,12 +35,12 @@ type Effs' r = Members '[Error Err, FreshVar, FreshLabel, Embed IO] r
 
 isAtomicFunction :: Effs r => AbsInt.Function -> Sem r Bool
 isAtomicFunction (AbsInt.Global v) = gets (preview $ #globals % ix v) >>= \case
-  Nothing -> throw $ InternalError $ "Unknown top-level function: " <> pshow v
+  Nothing -> throwMsg $ "Cps: Unknown top-level function: " <> pshow v
   Just as -> pure $ not $ funDoCps as
 isAtomicFunction (AbsInt.PrimOp _) = pure True
 isAtomicFunction (AbsInt.Lambda l) = gets (preview $ #terms % ix l) >>= \case
-  Just (Term {termTerm=Abs as _}) -> pure $ not $ funDoCps as
-  _ -> throw $ InternalError $ "Not a label for lambda" <> pshow l
+  Just (Term {termF=Abs as _ _}) -> pure $ not $ funDoCps as
+  _ -> throwLabeled l $ "Cps: Not a lambda"
 
 isAtomic :: Effs r => Term -> Sem r Bool
 isAtomic t =
@@ -50,30 +50,43 @@ allSerious :: Effs r => Term -> Sem r Bool
 allSerious t =
   gets cpsAnalysis >>= AbsInt.lookup (termLabel t) >>= all (\f -> not <$> isAtomicFunction f)
 
-transformAtomic :: Effs r => Term -> Sem r Term
-transformAtomic tm = case termTerm tm of
+orElse :: Maybe a -> Maybe a -> Maybe a
+orElse Nothing m = m
+orElse m _ = m
+
+transformAtomic :: Effs r => Maybe Text -> Term -> Sem r Term
+transformAtomic txt tm = case termF tm of
   App f ts -> do
     b <- isAtomic f
-    ts' <- traverse transformAtomic ts
+    ts' <- traverse (transformAtomic txt) ts
     if b
-      then pure tm {termTerm = App f ts'}
+      then pure tm {termF = App f ts'}
       else do
         b' <- allSerious f
         if b'
           then do
             v <- freshVar "x"
-            k <- term =<< Abs defaultFunAnnot . scope [v] <$> term (Var v)
-            pure tm {termTerm = App f (ts <> [k])}
-          else throw $ InternalError $ "Application of both cps and non-cps functions"
-  Abs a s | not $ funDoCps a ->
-    term . Abs a =<< traverse transformAtomic s
-  Abs a (Scope xs t) -> do
+            let as = defaultFunAnnot {funDefunName = Just (MkTp "Halt")}
+            k <- mkTerm' =<< Abs as [v] <$> mkTerm' (Var v)
+            pure tm {termF = App f (ts <> [k])}
+          else throwLabeled (termLabel tm) $ "Cps: Application of both cps and non-cps functions"
+  Abs a xs t | not $ funDoCps a ->
+    mkTerm' . Abs a xs =<< transformAtomic txt t
+  Abs a xs t -> do
     k' <- freshVar "cont"
-    t' <- join $ transformNormal <$> classify t <*> pure (Var k')
-    pure tm {termTerm = Abs a $ Scope (xs <> [(k', Nothing)]) t'}
-  t' -> do
-    t'' <- traverse transformAtomic t'
-    pure tm {termTerm = t''}
+    t' <- transformNormal (Var k') txt =<< classify t
+    pure tm {termF = Abs a (xs <> [k']) t'}
+  Case t bs -> do
+    t' <- transformAtomic txt t
+    bs' <- transformBranches transformAtomic txt bs
+    pure tm {termF = Case t' bs'}
+  t -> mkTerm' =<< traverse (transformAtomic txt) t
+
+transformBranches :: Effs r => (Maybe Text -> t -> Sem r Term) -> Maybe Text -> Branches t -> Sem r (Branches Term)
+transformBranches f txt (Branch p t bs) = do
+  let txt' = patternTp p `orElse` txt
+  Branch p <$> f txt' t <*> transformBranches f txt bs
+transformBranches _ _ BNil = pure $ BNil
 
 isTrivial :: CT -> Sem r Bool
 isTrivial Trivial {} = pure True
@@ -84,14 +97,13 @@ trivial = pure . Trivial
 
 classify :: Effs r => Term -> Sem r CT
 classify old@Term {..} =
-  case termTerm of
+  case termF of
     Var {} -> trivial old
     Abs {} -> trivial old
     App f ts -> isAtomic f >>= \case
       True -> trivial old
       False -> pure $ SApp termLabel f ts
     Let as x t b -> ((,) <$> classify t <*> classify b) >>= \case
-      -- (Trivial {}, Trivial {}) -> trivial old
       (t', b') -> pure $ SLet termLabel as x t' b'
     Case t ps -> do
       ps' <- traverse classify ps
@@ -99,44 +111,51 @@ classify old@Term {..} =
         True -> trivial old
         False -> pure $ SCase termLabel t ps'
     Cons _ -> trivial old
-    Panic -> pure $ SPanic termLabel
+    Error err -> pure $ SPanic termLabel err
 
-transformNormal :: Effs r => CT -> TermF Term -> Sem r Term
-transformNormal tm k = case tm of
+patternTp :: Pattern -> Maybe Text
+patternTp (PCons (Record (MkTp t) _)) = Just t
+patternTp _ = Nothing
+
+transformNormal :: Effs r => TermF Term -> Maybe Text -> CT -> Sem r Term
+transformNormal k txt tm = case tm of
   Trivial t -> do
-    t' <- transformAtomic t
+    t' <- transformAtomic txt t
     v <- freshVar "val"
-    body <- term =<< App <$> term k <*> traverse term [Var v]
-    term $ Let LetAnnot {letGenerated = True} (PVar v) t' body
+    body <- mkTerm' =<< App <$> mkTerm' k <*> traverse mkTerm' [Var v]
+    mkTerm' $ Let LetAnnot {letGenerated = True} (PVar v) t' body
   SApp termLabel f ts -> do
-    k' <- term k
-    pure Term {termTerm = App f (ts <> [k']), ..}
+    k' <- mkTerm' k
+    pure Term {termF = App f (ts <> [k']), ..}
   SLet termLabel a x (Trivial t) b -> do
-    t' <- transformAtomic t
-    b' <- transformNormal b k
-    pure Term {termTerm = Let a x t' b', ..}
+    t' <- transformAtomic txt t
+    b' <- transformNormal k txt b
+    pure Term {termF = Let a x t' b', ..}
   SLet _ _ (PVar x) t b -> do
-    b' <- transformNormal b k
-    let k' = Abs defaultFunAnnot $ scope [x] b'
-    transformNormal t k'
+    b' <- transformNormal k txt b
+    name <- freshTag $ fromMaybe "Cont" txt
+    let k' = Abs defaultFunAnnot {funDefunName = Just name} [x] b'
+    transformNormal k' txt t
   SLet _ _ p t b -> do
     v <- freshVar "val"
-    b' <- transformNormal b k
-    let (pat, xs) = extractNames p
-    b'' <- term =<< Case <$> (term $ Var v) <*> pure (Patterns [(pat, scope xs b')])
-    let k' = Abs defaultFunAnnot $ scope [v] b''
-    transformNormal t k'
-  SCase termLabel t ps ->
+    b' <- transformNormal k txt b
+    b'' <- mkTerm' =<< Case <$> (mkTerm' $ Var v) <*> pure (Branch p b' BNil)
+    name <- freshTag $ fromMaybe "Cont" txt
+    let k' = Abs defaultFunAnnot {funDefunName = Just name} [v] b''
+    transformNormal k' txt t
+  SCase termLabel t bs ->
     case k of
       Var {} -> do
-        ps' <- traverse (flip transformNormal k) ps
-        pure Term {termTerm = Case t ps', ..}
+        bs' <- transformBranches (transformNormal k) txt bs
+        pure Term {termF = Case t bs', ..}
       _ -> do
         k' <- freshVar "cont"
-        ps' <- traverse (flip transformNormal (Var k')) ps
-        let t' = Term {termTerm = Case t' ps', ..}
-        term =<< Let LetAnnot {letGenerated = True} (PVar k') <$> term k <*> pure t'
-  SPanic termLabel -> pure Term {termTerm = Panic, ..}
+        bs' <- transformBranches (transformNormal (Var k')) txt bs
+        let t' = Term {termF = Case t' bs', ..}
+        mkTerm' =<< Let LetAnnot {letGenerated = True} (PVar k') <$> mkTerm' k <*> pure t'
+  SPanic termLabel err -> pure Term {termF = Error err, ..}
+  where
+    termLoc = Nothing
 
 fromAnf :: Effs' r => Program Term -> Sem r (Program Term)
 fromAnf p@Program {..} = do
@@ -145,15 +164,15 @@ fromAnf p@Program {..} = do
   cpsAnalysis <- AbsInt.run p
   evalState Cps {..} do
     defs <- traverse aux (programDefinitions)
-    main <- traverse transformAtomic programMain
+    main <- traverse (transformAtomic Nothing) programMain
     pure $ Program {programDefinitions = defs, programMain = main, ..}
   where
     aux :: Effs r => DefFun Term -> Sem r (DefFun Term)
-    aux d@DefFun {funScope = Scope xs t, ..} =
+    aux d@DefFun {..} =
       if not $ funDoCps funAnnot
-        then traverse transformAtomic d
+        then traverse (transformAtomic Nothing) d
         else do
           k <- freshVar "cont"
-          t'' <- classify t
-          t' <- transformNormal t'' (Var k)
-          pure DefFun {funScope = Scope (xs <> [(k, Nothing)]) t', ..}
+          t'' <- classify funBody
+          t' <- transformNormal (Var k) Nothing t''
+          pure DefFun {funVars = funVars <> [(Nothing, k)], funBody = t', ..}

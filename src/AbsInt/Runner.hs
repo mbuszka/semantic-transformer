@@ -5,9 +5,7 @@ import qualified Data.Set as Set
 import Optics
 import Syntax hiding (ValueF (..))
 import Polysemy.State
-import Polysemy.Error
-import Util
--- import Util.Pretty
+import Common
 import AbsInt.Types
 import qualified AbsInt.Interpreter as Interpreter
 
@@ -19,13 +17,13 @@ alloc (t : ts) = do
   ts' <- alloc ts
   l <- freshLabel
   if Map.member t ts'
-    then throw $ ScopeError Nothing ("Multiple definitions of type: " <> pshow t)
+    then throwMsg $ "AbsInt: Multiple definitions of type: " <> pshow t
     else pure $ Map.insert t l ts'
 
 getTp :: Common r => TEnv -> Tp -> Sem r ValuePtr
 getTp tps t = case Map.lookup t tps of
   Just l -> pure $ ValuePtr l
-  Nothing -> throw $ ScopeError Nothing ("Reference to undefined type: " <> pshow t)
+  Nothing -> throwMsg ("AbsInt: Reference to undefined type: " <> pshow t)
 
 buildStore :: Common r => [DefData] -> [DefStruct] -> Sem r (Store Value, TEnv)
 buildStore datas structs = do
@@ -33,7 +31,6 @@ buildStore datas structs = do
         dataName : (dataTypes >>= (either (const []) (\s -> [structName s])))
   tps <-
     alloc $ MkTp "Any" : Map.keys builtinTypes <> (datas >>= aux) <> fmap structName structs
-  -- pprint' $ prettyMap tps
   any <- getTp tps (MkTp "Any")
   let runData :: (Common r, VStore r) => DefData -> Sem r ()
       runData DefData {..} = do
@@ -67,34 +64,33 @@ buildStore datas structs = do
         if store == store' then pure store else go store'
   (,tps) <$> go (Store Map.empty)
 
-addBinders :: Common r => TEnv -> Env -> [(Var, Maybe Tp)] -> Sem r Env
+addBinders :: Common r => TEnv -> Env -> [(Maybe Tp, Var)] -> Sem r Env
 addBinders tEnv env binders = case binders of
   [] -> pure env
-  (x, Just t) : bs -> do
+  (Just t, x) : bs -> do
     v <- getTp tEnv t
     addBinders tEnv (Map.insert x v env) bs
-  (x, Nothing) : bs -> do
+  (Nothing, x) : bs -> do
     v <- getTp tEnv (MkTp "Any")
     addBinders tEnv (Map.insert x v env) bs
 
 buildInitialConf ::
   Common r => TEnv -> DefFun Label -> Store Value -> Sem r (Store Value, Store Cont, Set Config)
 buildInitialConf tEnv DefFun {..} vStore = do
-  let Scope xs main = funScope
-  env <- addBinders tEnv Map.empty xs
-  let kStore = Store $ Map.singleton main $ Set.singleton Halt
-  pure (vStore, kStore, Set.singleton $ Eval env main $ ContPtr main)
+  env <- addBinders tEnv Map.empty funVars
+  let kStore = Store $ Map.singleton funBody $ Set.singleton Halt
+  pure (vStore, kStore, Set.singleton $ Eval env funBody $ ContPtr funBody)
 
 denormalize :: Common r => Term -> Sem r Label
 denormalize Term {..} = do
-  t <- traverse denormalize termTerm
+  t <- traverse denormalize termF
   modify' (over' #terms $ Map.insert termLabel t)
   pure termLabel
 
 runEffs :: Common r => Program Term -> Sem r (Store Value)
 runEffs pgm = do
   p@Program {..} <- traverse denormalize pgm
-  modify' (set #globals $ programScopes p)
+  modify' (set #globals $ programFuns p)
   (vStore, tEnv) <- buildStore programDatatypes programStructs
   conf <- buildInitialConf tEnv programMain vStore
   Interpreter.run conf

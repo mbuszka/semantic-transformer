@@ -14,8 +14,7 @@ import Polysemy.Error
 import qualified Pipeline.Scope as Scope
 import Polysemy.State
 import Syntax as Stx
-import Util
-import Util.Pretty
+import Common
 
 data Defun = Defun
   { defunTerms :: Map Label Term,
@@ -23,7 +22,7 @@ data Defun = Defun
     defunGlobals :: Map Var Tp,
     defunPrimOps :: Map Var Tp,
     defunAnalysis :: Result,
-    defunLambdas :: Map Label (Tp, [Var], Scope Term),
+    defunLambdas :: Map Label (Tp, [Var], [Var], Term),
     defunFvs :: Map Label Fvs
   }
 
@@ -45,29 +44,25 @@ initState terms analysis =
 
 noDefun :: Effs r => Function -> Sem r Bool
 noDefun (Lambda l) = gets (defunTerms) <&> Map.lookup l >>= \case
-  Just Term {termTerm = Abs FunAnnot {..} _} -> pure $ not funDoDefun
-  _ -> throw $ InternalError "Term not found"
+  Just Term {termF = Abs FunAnnot {..} _ _} -> pure $ not funDoDefun
+  _ -> throwLabeled l "Defun: Term not found"
 noDefun _ = pure True
 
 doDefun :: Effs r => Function -> Sem r Bool
 doDefun (Lambda l) = gets (defunTerms) <&> Map.lookup l >>= \case
-  Just Term {termTerm = Abs FunAnnot {..} _} -> pure $ funDoDefun
-  _ -> throw $ InternalError "Term not found"
+  Just Term {termF = Abs FunAnnot {..} _ _} -> pure $ funDoDefun
+  _ -> throwLabeled l "Defun: Term not found"
 doDefun _ = pure True
 
 transform ::
   Members [FreshVar, FreshLabel, Error Err, Embed IO] r => Program Term -> Sem r (Program Term)
 transform program = do
   analysis <- AbsInt.run program
-  -- pprint' $ prettyMap $ fmap toList analysis
   let terms = programTerms program
   let s = initState terms analysis
   evalState s do
-    let unwrap t = pure (termTerm t, Nothing)
-        wrap old fvs _ = do
-          modify (over #fvs $ Map.insert (termLabel old) fvs)
-          pure ()
-    _ <- Scope.checkProgram unwrap wrap program
+    res <- Scope.analyseProgram program
+    modify (set #fvs $ Scope.free res)
     Program {..} <- traverse transform' program
     structs <- genStructs
     applys <- genApplys
@@ -84,7 +79,7 @@ genStructs = do
   lambdas <- gets (toListOf $ #lambdas % folded)
   globals <- gets (toListOf $ #globals % folded)
   primOps <- gets (toListOf $ #primOps % folded)
-  let ls = lambdas <&> \case (name, fields, _) -> DefStruct name (fmap FieldName fields)
+  let ls = lambdas <&> \case (name, fields, _, _) -> DefStruct name (fmap FieldName fields)
       xs = globals <> primOps <&> \tag -> DefStruct tag []
   pure $ ls <> xs
 
@@ -93,46 +88,43 @@ genApplys = do
   applys <- gets (view $ #applys)
   for (Map.toList applys) \case
     (cases, (name, f : vs)) -> do
-      ps <- traverse (genBody vs) (toList cases)
-      b <- term =<< Case <$> (term $ Var f) <*> pure (Patterns ps)
-      pure $ DefFun name defaultFunAnnot (scope (f : vs) b)
+      bs <- genBody vs (toList cases)
+      b <- mkTerm' =<< Case <$> (mkTerm' $ Var f) <*> pure bs
+      pure $ DefFun name defaultFunAnnot (fmap (Nothing,) (f : vs)) b
     _ -> error "Uh oh"
 
-genBody :: Effs r => [Var] -> Function -> Sem r (Pattern (), Scope Term)
-genBody vs (Global v) = do
+genBody :: Effs r => [Var] -> [Function] -> Sem r (Branches Term)
+genBody vs (Global v:fs) = do
   tag <- getGlobal v
-  vs' <- traverse (term . Var) vs
+  vs' <- traverse (mkTerm' . Var) vs
   let pat = PCons $ Stx.Record tag []
-  body <- term =<< App <$> (term $ Var v) <*> pure vs'
-  pure (pat, scope [] body)
-genBody vs (PrimOp op) = do
+  body <- mkTerm' =<< App <$> (mkTerm' $ Var v) <*> pure vs'
+  Branch pat body <$> genBody vs fs
+genBody vs (PrimOp op:fs) = do
   let v = Stx.primOpNames Map.! op
   tag <- getPrim v
-  vs' <- traverse (term . Var) vs
+  vs' <- traverse (mkTerm' . Var) vs
   let pat = PCons $ Stx.Record tag []
-  body <- term =<< App <$> (term $ Var v) <*> pure vs'
-  pure (pat, scope [] body)
-genBody vs (Lambda l) = do
-  -- pprint' $ "generating body for" <+> pretty l
-  (tag, fvs, Scope xs b) <- getLambda l
-  -- pprint' $ "bound vars: " <+> pretty (fmap fst xs)
-  -- pprint' $ "free vars:" <+> pretty fvs
-  let p = PCons $ Stx.Record tag (fvs $> PVar ())
-      b' = scope fvs (rename (Map.fromList (fmap fst xs `zip` vs)) b)
-  pure (p, b')
+  body <- mkTerm' =<< App <$> (mkTerm' $ Var v) <*> pure vs'
+  Branch pat body <$> genBody vs fs
+genBody vs (Lambda l:fs) = do
+  (tag, fvs, xs, b) <- getLambda l
+  let pat = PCons $ Stx.Record tag (fmap PVar fvs)
+      body = rename (Map.fromList (xs `zip` vs)) b
+  Branch pat body <$> genBody vs fs
+genBody _ [] = pure BNil
 
-getLambda ::
-  Members [State Defun, Error Err] r => Label -> Sem r (Tp, [Var], Scope Term)
+getLambda :: Effs r => Label -> Sem r (Tp, [Var], [Var], Term)
 getLambda label = gets (preview (#lambdas % ix label)) >>= \case
-  Nothing -> error "No lambda"
+  Nothing -> error "Defun: Not a lambda"
   Just x -> pure x
 
-getFvs :: Member (State Defun) r => Label -> Sem r Fvs
+getFvs :: Effs r => Label -> Sem r Fvs
 getFvs lbl = gets (preview (#fvs % ix lbl)) >>= \case
-  Nothing -> error "No free variable information"
+  Nothing -> error "Defun: No free variable information"
   Just fvs -> pure fvs
 
-getPrim :: Members [FreshVar, State Defun] r => Var -> Sem r Tp
+getPrim :: Effs r => Var -> Sem r Tp
 getPrim p = do
   gets (preview (#primOps % ix p)) >>= \case
     Just tag -> pure tag
@@ -141,7 +133,7 @@ getPrim p = do
       modify' (over #primOps $ Map.insert p tag)
       pure tag
 
-getGlobal :: Members [FreshVar, State Defun] r => Var -> Sem r Tp
+getGlobal :: Effs r => Var -> Sem r Tp
 getGlobal v = do
   gets (preview (#globals % ix v)) >>= \case
     Just tag -> pure tag
@@ -151,68 +143,60 @@ getGlobal v = do
       pure tag
 
 transform' :: Effs r => Term -> Sem r Term
-transform' tm = case termTerm tm of
+transform' tm = case termF tm of
   App f xs -> do
     fvs <- getFvs (termLabel f)
     xs' <- traverse transform' xs
-    case termTerm f of
+    case termF f of
       Var v
         | fvs Map.! v /= RefLocal ->
-          term =<< App <$> (term $ Var v) <*> pure xs'
+          mkTerm' =<< App <$> (mkTerm' $ Var v) <*> pure xs'
       _ -> do
         f' <- transform' f
         fs <- getFuns (termLabel f)
         nd <- all noDefun fs
         dd <- all doDefun fs
-        if  | nd -> term $ App f' xs'
+        if  | nd -> mkTerm' $ App f' xs'
             | dd -> do
               apply <- getApply f (length xs)
-              term =<< App <$> (term . Var $ apply) <*> pure (f' : xs')
+              mkTerm' =<< App <$> (mkTerm' . Var $ apply) <*> pure (f' : xs')
             | otherwise ->
-              throw $ InternalError $
-                "Inconsitent defunctionalization requirements of lambdas at " <> pshow (termLabel f)
+              throwLabeled (termLabel f) "Defun: Inconsitent defunctionalization requirements of lambdas"
   t -> traverse transform' t >>= transformL (termLabel tm)
 
 transformL :: Effs r => Label -> TermF Term -> Sem r Term
 transformL label tm = case tm of
-  Abs as s -> do
+  Abs as xs t -> do
     nd <- noDefun (Lambda label)
     if nd
-      then pure $ Term {termLabel = label, termTerm = tm}
+      then pure $ Term {termLabel = label, termF = tm, termLoc = Nothing}
       else do
         fvs <- getFvs label <&> Map.filter (== RefLocal) <&> Map.keysSet <&> toList
         tag <- case funDefunName as of
-          Nothing -> freshTag "Lambda"
-          Just t -> pure t
-        modify' $ over #lambdas (Map.insert label (tag, fvs, s))
-        term =<< Cons <$> (Stx.Record tag <$> traverse (term . Var) fvs)
+          Nothing -> freshTag "Fun"
+          Just tag -> pure tag
+        modify' $ over #lambdas (Map.insert label (tag, fvs, xs, t))
+        mkTerm' =<< Cons <$> (Stx.Record tag <$> traverse (mkTerm' . Var) fvs)
   Var v -> do
     fvs <- getFvs label
     case fvs Map.! v of
       RefGlobal -> do
         tag <- getGlobal v
-        term . Cons $ Stx.Record tag []
+        mkTerm' . Cons $ Stx.Record tag []
       RefPrimOp -> do
         tag <- getPrim v
-        term . Cons $ Stx.Record tag []
-      RefLocal -> term . Var $ v
-  t -> term t
+        mkTerm' . Cons $ Stx.Record tag []
+      RefLocal -> mkTerm' . Var $ v
+  t -> mkTerm' t
 
--- getTerm :: Member (State Defun) r => Label -> Sem r Labeled
--- getTerm lbl = do
---   mby <- gets (preview (#terms % ix lbl))
---   case mby of
---     Nothing -> error ("No binding for label " <> pshow lbl)
---     Just t -> pure t
-
-getFuns :: Member (State Defun) r => Label -> Sem r (Set Function)
+getFuns :: Effs r => Label -> Sem r (Set Function)
 getFuns lbl = do
   mby <- gets (preview (#analysis % ix lbl))
   case mby of
-    Nothing -> error ("No analysis for label " <> pshow lbl)
+    Nothing -> throwLabeled lbl "Defun: No analysis"
     Just t -> pure t
 
-getApply :: Members [FreshVar, State Defun] r => Term -> Int -> Sem r Var
+getApply :: Effs r => Term -> Int -> Sem r Var
 getApply Term {..} n = do
   functions <- getFuns termLabel
   mby <- gets (preview (#applys % ix functions))

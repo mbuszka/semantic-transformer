@@ -45,7 +45,7 @@ library
     Syntax
     Syntax.Source
     Syntax.Pretty
-    Util
+    Common
     Util.Pretty
   
   default-extensions:
