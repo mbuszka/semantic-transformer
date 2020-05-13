@@ -11,7 +11,7 @@
 -- import Pretty
 -- import Syntax hiding (Value (..), ValueF (..))
 -- import qualified Syntax as Stx
--- import Util
+-- import Common
 
 -- data Value
 --   = Closure Env (Scope Term)

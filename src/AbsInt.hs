@@ -14,7 +14,7 @@ import Syntax
 import qualified AbsInt.Types as T
 import AbsInt.Types (Value, AbsInt (..), Store (..))
 import AbsInt.Runner
-import Util
+import Common
 import Polysemy.Error
 import Polysemy.State
 import Util.Pretty
@@ -41,7 +41,7 @@ fmt value = case value of
 
 lookup :: Member (Error Err) r => Label -> Result -> Sem r (Set Function)
 lookup l res = case Map.lookup l res of
-  Nothing -> throw $ InternalError $ "No analysis result for label: " <> pshow l
+  Nothing -> throwLabeled l $ "No analysis result"
   Just fs -> pure fs 
 
 run :: Members '[Error Err, FreshLabel, Embed IO] r => Program Term -> Sem r Result

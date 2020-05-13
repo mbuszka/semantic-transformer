@@ -1,6 +1,6 @@
 module Syntax.Source where
 
-import Util
+import Common
 import Syntax
 
 data SrcTerm =

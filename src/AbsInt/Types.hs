@@ -8,7 +8,7 @@ import Optics
 import Polysemy.Error
 import Polysemy.State
 import Syntax hiding (ValueF (..))
-import Util
+import Common
 
 type Labeled = TermF Label
 
@@ -21,7 +21,7 @@ newtype ContPtr = ContPtr {unContPtr :: Label} deriving (Eq, Ord, Pretty)
 data AbsInt
   = AbsInt
       { absIntTerms :: Map Label Labeled,
-        absIntGlobals :: Map Var (Scope Label)
+        absIntGlobals :: Map Var ([Var], Label)
       }
 
 $(makeFieldLabels ''AbsInt)
@@ -41,7 +41,7 @@ instance Pretty Value where
   pretty _ = mempty
 
 data Cont
-  = CLet Env (Pattern Var) Label ContPtr
+  = CLet Env Pattern Label ContPtr
   | Halt
   deriving (Eq, Ord)
 
@@ -76,14 +76,14 @@ copy :: (Common r, VStore r) => ValuePtr -> Label -> Sem r ValuePtr
 copy (ValuePtr src) dst = do
   (Store values) <- get @(Store Value)
   vs <- case Map.lookup src values of
-    Nothing -> throw $ InternalError $ "No value for label: " <> pshow src
+    Nothing -> throwLabeled src $ "AbsInt: No value in store"
     Just vs -> pure vs
   put . Store . Map.insertWith (<>) dst vs $ values
   pure $ ValuePtr dst
 
 term :: Common r => Label -> Sem r (TermF Label)
 term lbl = gets (preview $ #terms % ix lbl) >>= \case
-  Nothing -> error "Term not found"
+  Nothing -> throwLabeled lbl "AbsInt: Term not found"
   Just t -> pure t
 
 builtinTypes :: Map Tp Value

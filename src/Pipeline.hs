@@ -8,7 +8,6 @@ import qualified Parser
 import qualified Pipeline.Anf as Anf
 import qualified Pipeline.Cps as Cps
 import qualified Pipeline.InlineLet as InlineLet
-import qualified Pipeline.Scope as Scope
 import qualified Pipeline.Structure as Structure
 import Polysemy.Error
 import Syntax
@@ -19,7 +18,7 @@ import System.Directory
 import System.FilePath
 import System.IO (putStrLn)
 import System.Process
-import Util
+import Common
 
 data Transform = Anf | Cps | Defun | Inline
   deriving (Eq, Ord)
@@ -99,11 +98,10 @@ start Config {..} = do
       runtimePgmSuffix = srcEpilogue
   runtimeStageCnt <- embed $ newIORef Map.empty
   validated <- Structure.validate srcProgram
-  scoped <- Scope.fromSource validated
   when (runtimeSelfTest) do
     embed $ putStrLn =<< readProcess "raco" ["test", configSource] ""
   let stages = fromMaybe [Anf, Cps, Defun, Inline] configCustom
-  runStages Runtime {..} stages scoped
+  runStages Runtime {..} stages validated
 
 apply :: Effs r => Transform -> Program Term -> Sem r (Program Term)
 apply Anf p = Anf.transform p

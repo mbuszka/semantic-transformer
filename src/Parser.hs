@@ -6,12 +6,12 @@ where
 import qualified Data.Char as Char
 import qualified Data.Set as Set
 import qualified Data.Text as Text
-import Syntax
+import Syntax hiding (mkTerm)
 import Syntax.Source
 import Text.Megaparsec hiding (State (..))
 import Text.Megaparsec.Char hiding (space)
 import qualified Text.Megaparsec.Char.Lexer as L
-import Util
+import Common
 
 run :: FilePath -> Text -> Either Err SrcProgram
 run fileName program = case runParser parseProgram fileName program of
@@ -55,11 +55,11 @@ parseStruct =
 parseType :: Parser (Either Tp DefStruct)
 parseType = (Left <$> tp) <|> (Right <$> parseStruct)
 
-typed :: Parser (Var, Maybe Tp)
-typed = fmap (,Nothing) var <|> brackets do
+typed :: Parser (Maybe Tp, Var)
+typed = fmap (Nothing,) var <|> brackets do
   t <- tp
   v <- var
-  pure (v, Just t)
+  pure (Just t, v)
 
 mkTerm :: Parser (TermF SrcTerm) -> Parser SrcTerm
 mkTerm p = do
@@ -76,11 +76,11 @@ parseTerm = mkTerm (parens expr <|> cons <|> variable)
     expr = choice [lam, case', err, app]
     lam = keyword "fun" >> do
       as <- Set.fromList <$> many annot
-      xs <- parens (many typed)
-      Abs (transformAnnots as) . Scope xs <$> parseBlock
+      xs <- parens (many var)
+      Abs (transformAnnots as) xs <$> parseBlock
     app = liftA2 App parseTerm (many parseTerm)
-    case' = keyword "match" *> liftA2 Case parseTerm parsePatterns
-    err = keyword "error" >> stringLiteral $> Panic
+    case' = keyword "match" *> liftA2 Case parseTerm parseBranches
+    err = keyword "error" >> stringLiteral <&> Error
 
 parseBlock :: Parser SrcTerm
 parseBlock = try parseLet <|> parseTerm
@@ -95,16 +95,14 @@ parseLet = mkTerm do
   rest <- parseBlock
   pure $ Let (LetAnnot {letGenerated = False}) p t rest
 
-parsePatterns :: Parser (Patterns SrcTerm)
-parsePatterns = Patterns <$> many parseCase
+parseBranches :: Parser (Branches SrcTerm)
+parseBranches = parseBranch <|> pure BNil
+  where 
+    parseBranch = do
+      (p, b) <- parens $ (,) <$> parsePattern <*> parseBlock
+      Branch p b <$> parseBranches
 
-parseCase :: Parser (Pattern (), Scope SrcTerm)
-parseCase = parens $ do
-  (p, xs) <- extractNames <$> parsePattern
-  t <- parseBlock
-  pure (p, scope xs t)
-
-parsePattern :: Parser (Pattern Var)
+parsePattern :: Parser Pattern
 parsePattern =
   choice
     [ PWild <$ keyword "_",
@@ -137,7 +135,7 @@ parseFun = do
   as <- Set.fromList <$> many annot
   xs <- parens (many typed)
   t <- parseBlock
-  pure $ DefFun x (transformAnnots as) (Scope xs t)
+  pure $ DefFun x (transformAnnots as) xs t
 
 transformAnnots :: Set Annot -> FunAnnot
 transformAnnots as =

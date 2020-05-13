@@ -50,11 +50,10 @@ prettyDefData opts DefData {..} =
 
 prettyDefFun :: Options -> DefFun Term -> Doc ann
 prettyDefFun opts DefFun {..} =
-  let Scope vs body = funScope
-   in parens $ "def" <+> pretty funName <> prettyBody (variables vs) (prettyBlock opts body)
+  parens $ "def" <+> pretty funName <> prettyBody (variables funVars) (prettyBlock opts funBody)
 
 prettyBlock :: Options -> Term -> Doc ann
-prettyBlock opts@Options {..} tm@Term {..} = case termTerm of
+prettyBlock opts@Options {..} tm@Term {..} = case termF of
   Let _ x t b ->
     let s = parens ("let" <+> prettyPattern opts x <> nested 2 (prettyTerm opts t))
      in (if addLabels then pretty termLabel <> "#" else mempty) <> s <> hardline <> prettyBlock opts b
@@ -64,26 +63,24 @@ prettyTerm :: Options -> Term -> Doc ann
 prettyTerm opts@Options {..} Term {..} = prefix <> rest
   where
     prefix = if addLabels then pretty termLabel <> "#" else mempty
-    rest = case termTerm of
+    rest = case termF of
       Var v -> pretty v
       Cons v -> prettyValue opts (prettyTerm opts) v
-      Abs FunAnnot {..} (Scope vs t) ->
-        parens ("fun" <> prettyBody (variables vs) (prettyBlock opts t))
+      Abs FunAnnot {..} vs t ->
+        parens ("fun" <> prettyBody (parens $ aligned vs) (prettyBlock opts t))
       App t ts ->
         parens (prettyTerm opts t <> nested 2 (aligned' $ fmap (prettyTerm opts) ts))
       Case t ps ->
         parens ("match" <> prettyBody (prettyTerm opts t) (prettyCases opts ps))
-      Panic -> parens ("error" <+> escape "panic")
+      Error err -> parens ("error" <+> escape err)
       Let{} -> "ERROR"
 
-prettyCases :: Options -> Patterns Term -> Doc ann
-prettyCases opts (Patterns ps) = case ps of
-  [] -> mempty
-  [c] -> prettyCase c
-  cs -> rows . fmap prettyCase $ cs
-  where
-    prettyCase (p, Scope xs t) =
-      parens (prettyPattern opts (insertNames p . fmap fst $ xs) <> nested 2 (prettyBlock opts t))
+prettyCases :: Options -> Branches Term -> Doc ann
+prettyCases opts bs = rows $ aux bs
+  where 
+    aux BNil = []
+    aux (Branch p t bs') =
+      parens (prettyPattern opts p <> nested 2 (prettyBlock opts t)) : aux bs'
 
 prettyValue :: Options -> (a -> Doc ann) -> ValueF a -> Doc ann
 prettyValue _opts prettyInner v = case v of
@@ -93,16 +90,16 @@ prettyValue _opts prettyInner v = case v of
   Boolean True -> "#t"
   Boolean False -> "#f"
 
-prettyPattern :: Options -> Pattern Var -> Doc ann
+prettyPattern :: Options -> Pattern -> Doc ann
 prettyPattern opts pat = case pat of
   PVar v -> pretty v
   PType tp v -> brackets $ pretty tp <+> pretty v
   PWild -> "_"
   PCons v -> prettyValue opts (prettyPattern opts) v
 
-variable :: (Var, Maybe Tp) -> Doc ann
-variable (v, Nothing) = pretty v
-variable (v, Just tp) = brackets . aligned' $ [pretty tp, pretty v]
+variable :: (Maybe Tp, Var) -> Doc ann
+variable (Nothing, v) = pretty v
+variable (Just tp, v) = brackets . aligned' $ [pretty tp, pretty v]
 
-variables :: [(Var, Maybe Tp)] -> Doc ann
+variables :: [(Maybe Tp, Var)] -> Doc ann
 variables = parens . aligned' . fmap variable
