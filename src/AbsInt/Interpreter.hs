@@ -1,5 +1,7 @@
 module AbsInt.Interpreter (run) where
 
+import AbsInt.Types
+import Common
 import Control.Applicative ((<|>), empty)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -7,9 +9,7 @@ import Polysemy.NonDet
 import Polysemy.State
 import Syntax hiding (ValueF (..))
 import qualified Syntax as Stx
-import Common
 import Util.Pretty
-import AbsInt.Types
 
 type Effs r = (Common r, VStore r, KStore r, Member NonDet r)
 
@@ -46,7 +46,7 @@ lookup env var dst = case env Map.!? var of
 aval :: Effs r => Env -> Label -> Sem r ValuePtr
 aval env lbl = term lbl >>= \case
   Var v -> lookup env v lbl
-  Abs{} -> insertV lbl $ Closure env lbl
+  Abs {} -> insertV lbl $ Closure env lbl
   Cons (Stx.Boolean _) -> insertV lbl Boolean
   Cons (Stx.Number _) -> insertV lbl Integer
   Cons (Stx.String _) -> insertV lbl String
@@ -91,9 +91,12 @@ continue val k = derefK k >>= \case
   Halt -> empty
 
 evalCase :: Effs r => Env -> ValuePtr -> Branches Label -> ContPtr -> Sem r Config
-evalCase env vPtr (Branch p l bs) k = do
-  env' <- match env p vPtr
-  (pure $ Eval env' l k) <|> evalCase env vPtr bs k
+evalCase env vPtr (Branch p l bs) k =
+  ( do
+      env' <- match env p vPtr
+      pure $ Eval env' l k
+  )
+    <|> evalCase env vPtr bs k
 evalCase _ _ BNil _ = empty
 
 match :: Effs r => Env -> Pattern -> ValuePtr -> Sem r Env
@@ -147,4 +150,3 @@ run c@(vStore, kStore, configs) = do
         Continue v k -> continue v k
   let c' = (vStore', kStore', configs <> Set.fromList cs)
   if c == c' then pure vStore else run c'
-  

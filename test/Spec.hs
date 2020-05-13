@@ -9,6 +9,7 @@ import System.Directory
 import System.FilePath
 import System.Process
 import System.IO
+import System.Exit
 import qualified Data.Text.IO as TIO
 
 main :: IO ()
@@ -25,6 +26,8 @@ main = do
     let configSource = srcDir </> file
     maybeErr <- Pipeline.run Config {..}
     case maybeErr of
-      Left err -> TIO.putStrLn err
+      Left err -> do
+        TIO.putStrLn err
+        exitFailure
       Right () -> pure ()
     
