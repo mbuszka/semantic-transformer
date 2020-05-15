@@ -11,12 +11,14 @@ import Syntax.Source
 import Text.Megaparsec hiding (State (..))
 import Text.Megaparsec.Char hiding (space)
 import qualified Text.Megaparsec.Char.Lexer as L
+import Control.Monad.State.Strict
 import Common
+import Optics
 
-run :: FilePath -> Text -> Either Err SrcProgram
-run fileName program = case runParser parseProgram fileName program of
-  Left err -> Left . ParseError . Text.pack . errorBundlePretty $ err
-  Right p -> Right p
+run :: FilePath -> Text -> Either Err (SrcProgram, Set Text)
+run fileName program = case flip runState Set.empty $ runParserT parseProgram fileName program of
+  (Left err, _) -> Left . ParseError . Text.pack . errorBundlePretty $ err
+  (Right p, ts) -> Right (p, ts)
 
 -- Parser
 
@@ -38,7 +40,7 @@ parseProgram = do
   srcEpilogue <- (e <>) <$> takeRest
   pure (SrcProgram {..})
 
-type Parser a = Parsec Void Text a
+type Parser a = ParsecT Void Text (State (Set Text)) a
 
 parseField :: Parser StructField
 parseField =
@@ -126,7 +128,8 @@ annot =
   choice
     [ keyword "#:atomic" $> Atomic,
       keyword "#:no-defun" $> NoDefun,
-      keyword "#:name" >> tp <&> DefunName
+      keyword "#:name" >> tp <&> DefunName,
+      keyword "#:apply" >> var <&> DefunApply
     ]
 
 parseFun :: Parser (DefFun SrcTerm)
@@ -137,18 +140,14 @@ parseFun = do
   t <- parseBlock
   pure $ DefFun x (transformAnnots as) xs t
 
+
+
 transformAnnots :: Set Annot -> FunAnnot
 transformAnnots as =
   let funDoCps = Set.notMember Atomic as
       funDoDefun = Set.notMember NoDefun as
-      funDefunName =
-        as
-          & toList
-            >>= ( \case
-                    DefunName n -> [n]
-                    _ -> []
-                )
-          & listToMaybe
+      funDefunName = headOf (folded % #defunName) as
+      funDefunApply = headOf (folded % #defunApply) as
    in FunAnnot {..}
 
 parseData :: Parser DefData
@@ -193,17 +192,26 @@ parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
 var :: Parser Var
-var = MkVar <$> lexeme (mfilter (not . flip elem keywords) $ text)
+var = do
+  t <- lexeme (mfilter (not . flip elem keywords) $ text)
+  modify (Set.insert t)
+  pure $ MkVar t
   where
     text = Text.cons <$> satisfy identFirst <*> takeWhileP Nothing identRest
 
 tp :: Parser Tp
-tp = MkTp <$> lexeme text
+tp = do
+  t <- lexeme text
+  modify (Set.insert t)
+  pure $ MkTp t
   where
     text = Text.cons <$> satisfy Char.isAsciiUpper <*> takeWhileP Nothing identRest
 
 keyword :: Text -> Parser Text
-keyword s = lexeme $ try (string s <* notFollowedBy (satisfy identRest))
+keyword s = do
+  t <- lexeme $ try (string s <* notFollowedBy (satisfy identRest))
+  modify (Set.insert t)
+  pure t
 
 stringLiteral :: Parser Text
 stringLiteral =

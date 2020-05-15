@@ -20,12 +20,12 @@
     ([Integer n] n)
     ({Lam x body}
      (fun (v) (eval (extend env x v) body)))
-    ({App f x} ((eval env f) (eval env x)))
+    ({App fn arg} ((eval env fn) (eval env arg)))
     ({Add n m} (+ (eval env n) (eval env m)))
     ))
 
 (def extend #:atomic (env k v)
-  (fun #:atomic (x)
+  (fun #:atomic #:name Extend #:apply lookup (x)
     (match (eq? x k)
       (#t v)
       (#f (env x)))))

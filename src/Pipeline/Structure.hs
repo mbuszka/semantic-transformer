@@ -3,11 +3,11 @@ module Pipeline.Structure
   )
 where
 
+import Common
 import qualified Data.Set as Set
 import Polysemy.Error
 import Syntax
 import Syntax.Source
-import Common
 
 data Acc k v = Acc (Set k) [v]
 
@@ -16,14 +16,12 @@ type Effs r = Members [FreshLabel, Error Err] r
 empty :: Acc k v
 empty = Acc Set.empty []
 
-data Builder t
-  = B
-      { definitions :: Acc Var (DefFun SrcTerm),
-        datatypes :: Acc Tp DefData,
-        main :: Maybe (DefFun t),
-        structs :: Acc Tp DefStruct
-      }
-
+data Builder t = B
+  { definitions :: Acc Var (DefFun SrcTerm),
+    datatypes :: Acc Tp DefData,
+    main :: Maybe (DefFun t),
+    structs :: Acc Tp DefStruct
+  }
 
 validate :: forall r. Effs r => [TopLevel] -> Sem r (Program Term)
 validate topLevels = do

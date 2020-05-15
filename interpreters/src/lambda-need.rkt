@@ -48,7 +48,6 @@
        (_ (nth env (- n 1)))))))
 
 (def eval ([Term expr] [Env env] [Heap heap])
-  ;; (let {Unit} expr)
   (match expr
     ([Integer n]
       (let location (nth env n))
@@ -60,10 +59,11 @@
           {Pair value heap})))
     ({App fn arg}
       (let {Pair f heap} (eval fn env heap))
-      (let {Pair loc heap} (alloc heap {Delayed (fun (heap) (eval arg env heap))}))
+      (let {Pair loc heap} 
+        (alloc heap {Delayed (fun #:name Payload #:apply force (heap) (eval arg env heap))}))
       (f loc heap))
     ({Abs body}
-      {Pair (fun (loc heap) (eval body {Cons loc env} heap)) heap})
+      {Pair (fun #:name Closure (loc heap) (eval body {Cons loc env} heap)) heap})
     ({Unit} {Pair {Unit} heap})
     ))
 

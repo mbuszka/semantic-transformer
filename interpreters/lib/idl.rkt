@@ -58,7 +58,7 @@
              #:with struct-def #'str.struct-def))
 
   (define-splicing-syntax-class kw-arg
-    (pattern (~seq _:keyword _:type))
+    (pattern (~seq _:keyword _:id))
     (pattern _:keyword)
     )
 
@@ -122,7 +122,7 @@
 
 (define-syntax (def stx)
   (syntax-parse stx
-    [(_ name:id _:keyword ... (arg:typed-arg ...) . body:statements)
+    [(_ name:id _:kw-arg ... (arg:typed-arg ...) . body:statements)
      #:with contract #'(-> arg.contract ... any/c)
      #'(begin
          (define/contract (name arg.name ...) contract body.res))]))

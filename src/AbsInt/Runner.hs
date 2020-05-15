@@ -1,13 +1,13 @@
 module AbsInt.Runner (runEffs) where
 
+import qualified AbsInt.Interpreter as Interpreter
+import AbsInt.Types
+import Common
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Optics
-import Syntax hiding (ValueF (..))
 import Polysemy.State
-import Common
-import AbsInt.Types
-import qualified AbsInt.Interpreter as Interpreter
+import Syntax hiding (ValueF (..))
 
 type TEnv = Map Tp Label
 
@@ -27,7 +27,7 @@ getTp tps t = case Map.lookup t tps of
 
 buildStore :: Common r => [DefData] -> [DefStruct] -> Sem r (Store Value, TEnv)
 buildStore datas structs = do
-  let aux DefData {..} = 
+  let aux DefData {..} =
         dataName : (dataTypes >>= (either (const []) (\s -> [structName s])))
   tps <-
     alloc $ MkTp "Any" : Map.keys builtinTypes <> (datas >>= aux) <> fmap structName structs
@@ -57,7 +57,6 @@ buildStore datas structs = do
         for_ structs runStruct
         for_ (toList (Map.delete (MkTp "Any") tps)) \l -> do
           copy (ValuePtr l) (unValuePtr any)
-
       go :: Common r => Store Value -> Sem r (Store Value)
       go store = do
         store' <- execState store step

@@ -8,14 +8,14 @@ module AbsInt
   )
 where
 
+import qualified AbsInt.Types as T
+import AbsInt.Types (AbsInt (..), Store (..), Value)
+import AbsInt.Runner
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import Syntax
-import qualified AbsInt.Types as T
-import AbsInt.Types (Value, AbsInt (..), Store (..))
-import AbsInt.Runner
 import Common
 import Polysemy.Error
+import Syntax
 import Polysemy.State
 import Util.Pretty
 
@@ -42,7 +42,7 @@ fmt value = case value of
 lookup :: Member (Error Err) r => Label -> Result -> Sem r (Set Function)
 lookup l res = case Map.lookup l res of
   Nothing -> throwLabeled l $ "No analysis result"
-  Just fs -> pure fs 
+  Just fs -> pure fs
 
 run :: Members '[Error Err, FreshLabel, Embed IO] r => Program Term -> Sem r Result
 run program = do

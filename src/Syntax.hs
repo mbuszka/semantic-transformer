@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableInstances #-}
+
 module Syntax
   ( Annot (..),
     Bound (..),
@@ -42,9 +44,11 @@ where
 
 import Common
 import Data.IORef
+import qualified Data.List as List
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
+import Optics
 
 data Program t = Program
   { programDefinitions :: [DefFun t],
@@ -71,13 +75,15 @@ data StructField = FieldName Var | FieldType Tp | FieldBoth Tp Var
 data Annot
   = Atomic
   | NoDefun
-  | DefunName Tp
+  | DefunName {annotDefunName :: Tp}
+  | DefunApply {annotDefunApply :: Var}
   deriving (Eq, Ord)
 
 data FunAnnot = FunAnnot
   { funDoCps :: Bool,
     funDoDefun :: Bool,
-    funDefunName :: Maybe Tp
+    funDefunName :: Maybe Tp,
+    funDefunApply :: Maybe Var
   }
 
 data LetAnnot = LetAnnot
@@ -89,7 +95,7 @@ data PrimOp = Add | Sub | Mul | Div | Neg | And | Or | Not | Eq
 
 type Fvs = Map Var RefersTo
 
-data RefersTo = RefGlobal | RefPrimOp | RefLocal deriving (Eq, Ord)
+data RefersTo = RefGlobal | RefPrimOp | RefLocal Label deriving (Eq, Ord)
 
 data TermF t
   = Var Var
@@ -113,7 +119,7 @@ data Pattern
 data Branches t = Branch Pattern t (Branches t) | BNil
   deriving (Functor, Foldable, Traversable, Eq, Ord)
 
-newtype Var = MkVar Text
+newtype Var = MkVar {unVar :: Text}
   deriving (Eq, Ord, Show, Pretty)
 
 newtype Tp = MkTp Text
@@ -174,7 +180,13 @@ patternVars PWild = []
 patternVars (PCons c) = foldMap patternVars c
 
 defaultFunAnnot :: FunAnnot
-defaultFunAnnot = FunAnnot {funDoCps = True, funDoDefun = True, funDefunName = Nothing}
+defaultFunAnnot =
+  FunAnnot
+    { funDoCps = True,
+      funDoDefun = True,
+      funDefunName = Nothing,
+      funDefunApply = Nothing
+    }
 
 varToTp :: Var -> Tp
 varToTp (MkVar v) = MkTp (Text.toTitle v)
@@ -182,11 +194,9 @@ varToTp (MkVar v) = MkTp (Text.toTitle v)
 tpToVar :: Tp -> Var
 tpToVar (MkTp t) = MkVar (Text.toLower t)
 
-programFuns :: Program t -> Map Var ([Var], t)
+programFuns :: Program t -> Map Var (DefFun t)
 programFuns Program {..} =
-  programDefinitions
-    <&> (\DefFun {..} -> (funName, (fmap snd funVars, funBody)))
-    & Map.fromList
+  Map.fromList $ fmap (\f -> (funName f, f)) programDefinitions
 
 programTerms :: Program Term -> Map Label Term
 programTerms = foldMap aux
@@ -215,6 +225,8 @@ instance Pretty PrimOp where
     let ops = Map.fromList . fmap swap . Map.toList $ primOps
      in pretty $ ops Map.! op
 
+$(makeFieldLabels ''Annot)
+
 -- Fresh variable generation
 
 data FreshVar m a where
@@ -228,20 +240,24 @@ freshVar t = fresh t <&> MkVar
 freshTag :: Member FreshVar r => Text -> Sem r Tp
 freshTag t = fresh t <&> MkTp
 
-runFreshVar :: Member (Embed IO) r => Sem (FreshVar ': r) a -> Sem r a
-runFreshVar sem = do
-  ref <- embed $ newIORef (Map.empty :: Map Text Int)
-  interpret
-    ( \case
-        Fresh t -> do
-          names <- embed $ readIORef ref
-          let (n, m) = case Map.lookup t names of
-                Nothing -> (1, Map.insert t 1 names)
-                Just x -> (x + 1, Map.insert t (x + 1) names)
-          embed $ writeIORef ref m
-          return (t <> pshow n)
-    )
-    sem
+runFreshVar :: Member (Embed IO) r => Set Text -> Sem (FreshVar ': r) a -> Sem r a
+runFreshVar init sem = do
+  let names :: Map Text Int = Map.fromList $ Set.toList init `zip` List.repeat 1
+  ref <- embed $ newIORef names
+  interpret (\case Fresh t -> embed $ getNext ref t) sem
+
+getNext :: IORef (Map Text Int) -> Text -> IO Text
+getNext ref t = do
+  names <- readIORef ref
+  case Map.lookup t names of
+    Nothing -> writeIORef ref (Map.insert t 1 names) >> pure t
+    Just n -> let (t', names') = loop names n in writeIORef ref names' >> pure t'
+  where
+    loop ns m =
+      let t' = t <> pshow m
+       in case Map.lookup t' ns of
+            Nothing -> (t', Map.insert t' 1 ns)
+            Just _ -> loop ns (m + 1)
 
 data FreshLabel m a where
   FreshLabel :: FreshLabel m Label

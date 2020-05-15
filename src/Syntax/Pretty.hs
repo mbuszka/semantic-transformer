@@ -73,11 +73,11 @@ prettyTerm opts@Options {..} Term {..} = prefix <> rest
       Case t ps ->
         parens ("match" <> prettyBody (prettyTerm opts t) (prettyCases opts ps))
       Error err -> parens ("error" <+> escape err)
-      Let{} -> "ERROR"
+      Let {} -> "ERROR"
 
 prettyCases :: Options -> Branches Term -> Doc ann
 prettyCases opts bs = rows $ aux bs
-  where 
+  where
     aux BNil = []
     aux (Branch p t bs') =
       parens (prettyPattern opts p <> nested 2 (prettyBlock opts t)) : aux bs'

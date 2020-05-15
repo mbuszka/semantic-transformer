@@ -2,13 +2,13 @@
 
 module AbsInt.Types where
 
+import Common
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Optics
 import Polysemy.Error
 import Polysemy.State
 import Syntax hiding (ValueF (..))
-import Common
 
 type Labeled = TermF Label
 
@@ -18,11 +18,10 @@ newtype ValuePtr = ValuePtr {unValuePtr :: Label} deriving (Eq, Ord, Pretty)
 
 newtype ContPtr = ContPtr {unContPtr :: Label} deriving (Eq, Ord, Pretty)
 
-data AbsInt
-  = AbsInt
-      { absIntTerms :: Map Label Labeled,
-        absIntGlobals :: Map Var ([Var], Label)
-      }
+data AbsInt = AbsInt
+  { absIntTerms :: Map Label Labeled,
+    absIntGlobals :: Map Var (DefFun Label)
+  }
 
 $(makeFieldLabels ''AbsInt)
 

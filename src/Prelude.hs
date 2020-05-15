@@ -41,15 +41,15 @@ import Control.Applicative
     liftA2,
     liftA3,
   )
-import Control.Monad ((<=<), (=<<), (>=>), mfilter, when, join)
+import Control.Monad ((<=<), (=<<), (>=>), join, mfilter, when)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Either (Either (..), either)
-import Data.Foldable (Foldable (..), for_, toList, traverse_, foldlM)
+import Data.Foldable (Foldable (..), foldlM, for_, toList, traverse_)
 import Data.Function ((&), (.), const)
 import Data.Functor (($>), (<$>), (<&>), Functor (..), void)
 import Data.List (reverse, take, zip)
 import Data.Map (Map)
-import Data.Maybe (Maybe (..), maybe, fromMaybe, listToMaybe)
+import Data.Maybe (Maybe (..), fromMaybe, listToMaybe, maybe)
 import Data.Monoid (Monoid (..))
 import Data.Semigroup ((<>), Semigroup)
 import Data.Sequence (Seq (..))
@@ -84,7 +84,7 @@ import GHC.Base
 import qualified GHC.Base as Base
 import GHC.IO (FilePath)
 import GHC.Num ((*), (+), (-), Num)
-import GHC.Real (Integral(..))
+import GHC.Real (Integral (..))
 import GHC.Show (Show (show))
 import GHC.Stack (HasCallStack)
 import Polysemy hiding (run, transform)
@@ -93,7 +93,7 @@ all :: (Foldable f, Monad m) => (a -> m Bool) -> f a -> m Bool
 all p xs = foldlM f True xs
   where
     f False _ = pure False
-    f True  r = p r
+    f True r = p r
 
 pprint' :: MonadIO m => Doc ann -> m ()
 pprint' = liftIO . Text.putStrLn . pshow'

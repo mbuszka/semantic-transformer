@@ -1,9 +1,10 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Pipeline.Scope
-  ( Result(..),
+  ( Result (..),
     analyse,
     analyseProgram,
+    isLocal,
   )
 where
 
@@ -17,18 +18,30 @@ import Syntax
 
 type Env = Map Var RefersTo
 
-data Result = Result {bound :: Map Label (Set Var), free :: Map Label Fvs}
+data Result = Result
+  { bound :: Map Label (Set Var),
+    free :: Map Label Fvs,
+    -- Maps the label INSIDE the binder to uses of the variable
+    uses :: Map (Label, Var) (Set Label)
+  }
 
 $(makeFieldLabelsWith noPrefixFieldLabels ''Result)
 
 type Effs r = Members [Error Err, State Result] r
+
+isLocal :: RefersTo -> Bool
+isLocal (RefLocal _) = True
+isLocal _ = False
 
 analyse :: Effs r => Env -> Term -> Sem r Fvs
 analyse env Term {..} = do
   modify (over #bound $ Map.insert termLabel (Map.keysSet env))
   fvs <- case termF of
     Var v -> do
-      when (Map.notMember v env) $ throw (Err termLoc (Just termLabel) $ "Unknown variable: " <> pshow v)
+      case Map.lookup v env of
+        Nothing -> throw (Err termLoc (Just termLabel) $ "Unknown variable: " <> pshow v)
+        Just (RefLocal l) -> modify (over #uses (Map.insertWith (<>) (l, v) (Set.singleton termLabel)))
+        _ -> pure ()
       pure $ Map.restrictKeys env (Set.singleton v)
     Abs _ xs t -> scoped env xs t
     App t ts -> do
@@ -49,7 +62,7 @@ analyse env Term {..} = do
 
 scoped :: Effs r => Env -> [Var] -> Term -> Sem r Fvs
 scoped env xs t = do
-  let env' = Map.fromList (fmap (,RefLocal) xs) <> env
+  let env' = Map.fromList (fmap (,RefLocal (termLabel t)) xs) <> env
   Map.withoutKeys <$> analyse env' t <*> pure (Set.fromList xs)
 
 analyseBranches :: Effs r => Env -> Branches Term -> Sem r Fvs
@@ -66,6 +79,6 @@ analyseProgram Program {..} = do
           programDefinitions
             <&> \DefFun {..} -> (funName, RefGlobal)
       env = globals <> (RefPrimOp <$ primOps)
-  execState (Result Map.empty Map.empty) do
-    for_ (programMain:programDefinitions) \case
+  execState (Result Map.empty Map.empty Map.empty) do
+    for_ (programMain : programDefinitions) \case
       DefFun {..} -> scoped env (fmap snd funVars) funBody $> ()

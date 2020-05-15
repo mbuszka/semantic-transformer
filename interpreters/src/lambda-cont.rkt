@@ -13,12 +13,12 @@
   {Shift String Term})
 
 (def extend #:atomic (env k v)
-  (fun #:atomic (x)
+  (fun #:atomic #:name Extend (x)
     (match (eq? x k)
       (#t v)
       (#f (env x)))))
 
-(def init #:atomic (x) (error "empty environment"))
+(def init #:atomic #:apply lookup (x) (error "empty environment"))
 
 (def eval (term env k)
   (match term
@@ -32,7 +32,8 @@
       (let c (fun #:name F-Cont (v k1) (k1 (k v))))
       (eval t (extend env k1 c) (fun #:name K-Shift (v) v)))))
 
-(def main ([Term term]) (eval term init (fun #:name K-Halt (v) v)))
+(def main ([Term term])
+  (eval term init (fun #:name K-Halt #:apply apply-k (v) v)))
 
 ; end interpreter
 

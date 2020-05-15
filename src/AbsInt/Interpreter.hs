@@ -133,8 +133,8 @@ apply l f as k = derefV f >>= \case
       pure $ Eval (Map.fromList (xs `zip` as) <> env) b k
     _ -> throwLabeled l $ "AbsInt: Expected a lambda"
   Global x -> do
-    (xs, body) <- gets ((Map.! x) . absIntGlobals)
-    pure $ Eval (Map.fromList (xs `zip` as)) body k
+    DefFun {..} <- gets ((Map.! x) . absIntGlobals)
+    pure $ Eval (Map.fromList (fmap snd funVars `zip` as)) funBody k
   PrimOp op -> do
     vs <- traverse derefV as
     ptr <- insertV l =<< prim op vs

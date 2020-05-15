@@ -1,5 +1,6 @@
 module Pipeline (Config (..), run) where
 
+import Common
 import Data.Bifunctor
 import Data.IORef
 import qualified Data.Map as Map
@@ -8,17 +9,16 @@ import qualified Parser
 import qualified Pipeline.Anf as Anf
 import qualified Pipeline.Cps as Cps
 import qualified Pipeline.InlineLet as InlineLet
+import qualified Pipeline.Defun as Defun
 import qualified Pipeline.Structure as Structure
 import Polysemy.Error
 import Syntax
 import Syntax.Pretty
 import Syntax.Source
-import qualified Pipeline.Defun as Defun
 import System.Directory
 import System.FilePath
 import System.IO (putStrLn)
 import System.Process
-import Common
 
 data Transform = Anf | Cps | Defun | Inline
   deriving (Eq, Ord)
@@ -43,7 +43,9 @@ data Runtime = Runtime
     runtimeSelfTest :: Bool
   }
 
-type Effs r = Members '[Embed IO, FreshVar, FreshLabel, Error Err] r
+type Effs r = Members '[Embed IO, FreshLabel, Error Err] r
+
+type Effs' r = Members '[Embed IO, FreshVar, FreshLabel, Error Err] r
 
 run :: Config -> IO (Either Text ())
 run config = do
@@ -51,7 +53,6 @@ run config = do
     runFinal
       . embedToFinal
       . errorToIOFinal
-      . runFreshVar
       . runFreshLabel
       $ start config
   pure $ first pshow res
@@ -93,7 +94,7 @@ start Config {..} = do
       runtimePrintIntermediate = configIntermediate || configSelfTest
       runtimePrintDebug = configDebug
       runtimeSelfTest = configSelfTest
-  SrcProgram {..} <- fromEither $ Parser.run configSource txt
+  (SrcProgram {..}, names) <- fromEither $ Parser.run configSource txt
   let runtimePgmPrefix = srcPrologue
       runtimePgmSuffix = srcEpilogue
   runtimeStageCnt <- embed $ newIORef Map.empty
@@ -101,15 +102,15 @@ start Config {..} = do
   when (runtimeSelfTest) do
     embed $ putStrLn =<< readProcess "raco" ["test", configSource] ""
   let stages = fromMaybe [Anf, Cps, Defun, Inline] configCustom
-  runStages Runtime {..} stages validated
+  runFreshVar names $ runStages Runtime {..} stages validated
 
-apply :: Effs r => Transform -> Program Term -> Sem r (Program Term)
+apply :: Effs' r => Transform -> Program Term -> Sem r (Program Term)
 apply Anf p = Anf.transform p
 apply Cps p = Cps.fromAnf p
 apply Defun p = Defun.transform p
 apply Inline p = traverse InlineLet.transform p
 
-runStages :: Effs r => Runtime -> [Transform] -> Program Term -> Sem r ()
+runStages :: Effs' r => Runtime -> [Transform] -> Program Term -> Sem r ()
 runStages r [] pgm = do
   mkdir (runtimeOutputDir r)
   printProgram r "" pgm

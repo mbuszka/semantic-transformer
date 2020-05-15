@@ -5,7 +5,7 @@ all:
 	@echo "test			- run self-test on all files in interpreters/src"
 
 clean:
-	rm -rf interpreters/out
+	rm -f interpreters/out/*
 
 test: clean
 	cabal run semt-test

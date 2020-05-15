@@ -1,5 +1,5 @@
 module Pipeline.InlineLet
-  ( transform
+  ( transform,
   )
 where
 

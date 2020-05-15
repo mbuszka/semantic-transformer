@@ -6,19 +6,18 @@ module Pipeline.Cps
 where
 
 import AbsInt
+import Common
 import qualified Data.Map as Map
 import Optics
 import Polysemy.Error
 import Polysemy.State
 import Syntax
-import Common
 
-data Cps
-  = Cps
-      { cpsAnalysis :: AbsInt.Result,
-        cpsGlobals :: Map Var FunAnnot,
-        cpsTerms :: Map Label Term
-      }
+data Cps = Cps
+  { cpsAnalysis :: AbsInt.Result,
+    cpsGlobals :: Map Var FunAnnot,
+    cpsTerms :: Map Label Term
+  }
 
 $(makeFieldLabels ''Cps)
 
@@ -39,7 +38,7 @@ isAtomicFunction (AbsInt.Global v) = gets (preview $ #globals % ix v) >>= \case
   Just as -> pure $ not $ funDoCps as
 isAtomicFunction (AbsInt.PrimOp _) = pure True
 isAtomicFunction (AbsInt.Lambda l) = gets (preview $ #terms % ix l) >>= \case
-  Just (Term {termF=Abs as _ _}) -> pure $ not $ funDoCps as
+  Just (Term {termF = Abs as _ _}) -> pure $ not $ funDoCps as
   _ -> throwLabeled l $ "Cps: Not a lambda"
 
 isAtomic :: Effs r => Term -> Sem r Bool
@@ -66,12 +65,13 @@ transformAtomic txt tm = case termF tm of
         if b'
           then do
             v <- freshVar "x"
-            let as = defaultFunAnnot {funDefunName = Just (MkTp "Halt")}
+            let as = defaultFunAnnot {funDefunName = Just (MkTp "Halt"), funDefunApply = Just (MkVar "continue")}
             k <- mkTerm' =<< Abs as [v] <$> mkTerm' (Var v)
             pure tm {termF = App f (ts <> [k])}
           else throwLabeled (termLabel tm) $ "Cps: Application of both cps and non-cps functions"
-  Abs a xs t | not $ funDoCps a ->
-    mkTerm' . Abs a xs =<< transformAtomic txt t
+  Abs a xs t
+    | not $ funDoCps a ->
+      mkTerm' . Abs a xs =<< transformAtomic txt t
   Abs a xs t -> do
     k' <- freshVar "cont"
     t' <- transformNormal (Var k') txt =<< classify t
@@ -132,16 +132,18 @@ transformNormal k txt tm = case tm of
     b' <- transformNormal k txt b
     pure Term {termF = Let a x t' b', ..}
   SLet _ _ (PVar x) t b -> do
-    b' <- transformNormal k txt b
     name <- freshTag $ fromMaybe "Cont" txt
-    let k' = Abs defaultFunAnnot {funDefunName = Just name} [x] b'
+    apply <- freshVar "continue"
+    b' <- transformNormal k txt b
+    let k' = Abs defaultFunAnnot {funDefunName = Just name, funDefunApply = Just apply} [x] b'
     transformNormal k' txt t
   SLet _ a p t b -> do
     v <- freshVar "val"
+    name <- freshTag $ fromMaybe "Cont" txt
+    apply <- freshVar "continue"
     b' <- transformNormal k txt b
     b'' <- mkTerm' =<< Let a p <$> mkTerm' (Var v) <*> pure b'
-    name <- freshTag $ fromMaybe "Cont" txt
-    let k' = Abs defaultFunAnnot {funDefunName = Just name} [v] b''
+    let k' = Abs defaultFunAnnot {funDefunName = Just name, funDefunApply = Just apply} [v] b''
     transformNormal k' txt t
   SCase termLabel t bs ->
     case k of
