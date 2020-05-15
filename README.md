@@ -4,7 +4,8 @@ The project is built with `cabal`
 - `cabal build` to build
 - `cabal install` to install `semt` executable
 - `cabal run semt` to run the development build without installing
-- `cabal run semt-test` to test the tool on all example interpreters
+- `make test` to test the tool on all example interpreters
+- `make clean` to delete all generated interpreters
 
 To pass arguments to the executable use `cabal run semt --`
 
