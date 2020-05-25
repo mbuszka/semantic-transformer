@@ -90,7 +90,7 @@ data LetAnnot = LetAnnot
   { letGenerated :: Bool
   }
 
-data PrimOp = Add | Sub | Mul | Div | Neg | And | Or | Not | Eq
+data PrimOp = Add | Sub | Mul | Div | Neg | And | Or | Not | Eq | Lt
   deriving (Eq, Ord)
 
 type Fvs = Map Var RefersTo
@@ -214,7 +214,8 @@ primOps =
       (MkVar "and", And),
       (MkVar "not", Not),
       (MkVar "or", Or),
-      (MkVar "eq?", Eq)
+      (MkVar "eq?", Eq),
+      (MkVar "<", Lt)
     ]
 
 primOpNames :: Map PrimOp Var

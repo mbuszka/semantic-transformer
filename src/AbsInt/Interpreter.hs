@@ -81,6 +81,7 @@ prim op vs = case (op, vs) of
   (Or, [Boolean, Boolean]) -> pure Boolean
   (Not, [Boolean]) -> pure Boolean
   (Eq, [_, _]) -> pure Boolean
+  (Lt, [Integer, Integer]) -> pure Boolean
   _ -> empty
 
 continue :: Effs r => ValuePtr -> ContPtr -> Sem r Config

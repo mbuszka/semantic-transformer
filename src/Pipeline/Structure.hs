@@ -65,4 +65,4 @@ insert prj v (Acc known vs) err = case Set.member (prj v) known of
   False -> pure $ Acc (Set.insert (prj v) known) (v : vs)
 
 values :: Acc k v -> [v]
-values (Acc _ vs) = vs
+values (Acc _ vs) = reverse vs

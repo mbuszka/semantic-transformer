@@ -239,6 +239,7 @@ identFirst c = case c of
   '/' -> True
   '*' -> True
   '?' -> True
+  '<' -> True
   _ -> Char.isAlpha c
 
 identRest :: Char -> Bool
