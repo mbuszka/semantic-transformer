@@ -61,7 +61,8 @@ eval env lbl k = term lbl >>= \case
     apply lbl f' ts' k
   Let _ x t body -> do
     k' <- insertK t (CLet env x body k)
-    pure $ Eval env t k'
+    env' <- limitEnv env t
+    pure $ Eval env' t k'
   Case t ps -> do
     v <- aval env t
     evalCase env v ps k
@@ -88,14 +89,21 @@ continue :: Effs r => ValuePtr -> ContPtr -> Sem r Config
 continue val k = derefK k >>= \case
   CLet env pattern body k' -> do
     env' <- match env pattern val
-    pure $ Eval env' body k'
+    env'' <- limitEnv env' body
+    pure $ Eval env'' body k'
   Halt -> empty
+
+limitEnv :: Effs r => Env -> Label -> Sem r Env
+limitEnv env l = do
+  fm <- gets absIntFvs
+  pure $ Map.intersection env (fm Map.! l)
 
 evalCase :: Effs r => Env -> ValuePtr -> Branches Label -> ContPtr -> Sem r Config
 evalCase env vPtr (Branch p l bs) k =
   ( do
       env' <- match env p vPtr
-      pure $ Eval env' l k
+      env'' <- limitEnv env' l
+      pure $ Eval env'' l k
   )
     <|> evalCase env vPtr bs k
 evalCase _ _ BNil _ = empty
@@ -142,8 +150,21 @@ apply l f as k = derefV f >>= \case
     pure $ Continue ptr k
   _ -> empty
 
+
+data Stat = S (Map Var (Set ValuePtr)) (Set ContPtr)
+
+instance Pretty Stat where
+  pretty (S e ks) = (prettyMap $ fmap length $ e) <+> pretty (length ks)
+
+as :: Stat -> Stat -> Stat
+as (S e1 ks1) (S e2 ks2) = S (Map.unionWith (<>) e1 e2) (ks1 <> ks2)
+
 run :: Common r => (Store Value, Store Cont, Set Config) -> Sem r (Store Value)
 run c@(vStore, kStore, configs) = do
+  -- embed $ putTextLn "Computing"
+  -- embed $ pprint' (aux (toList configs))
+  -- embed $ pprint' ("conts: " <> pretty (sum . fmap length $ (unStore kStore)))
+  -- embed $ pprint' ("values: " <> pretty (sum . fmap length $ (unStore vStore)))
   (vStore', (kStore', cs)) <-
     runState vStore . runState kStore . runNonDet $ do
       oneOf configs >>= \case
@@ -151,3 +172,8 @@ run c@(vStore, kStore, configs) = do
         Continue v k -> continue v k
   let c' = (vStore', kStore', configs <> Set.fromList cs)
   if c == c' then pure vStore else run c'
+  where
+    aux :: [Config] -> Doc ann
+    aux cs =
+      let m = Map.fromListWith as [(l, S (fmap Set.singleton env) (Set.singleton k))| Eval env l k <- cs]
+       in prettyMap m

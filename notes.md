@@ -1,3 +1,5 @@
+TODO Normalization by Evaluation
+
 Pipeline:
 - parse input text, create program description, save: 
   + source locations

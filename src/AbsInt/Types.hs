@@ -20,7 +20,8 @@ newtype ContPtr = ContPtr {unContPtr :: Label} deriving (Eq, Ord, Pretty)
 
 data AbsInt = AbsInt
   { absIntTerms :: Map Label Labeled,
-    absIntGlobals :: Map Var (DefFun Label)
+    absIntGlobals :: Map Var (DefFun Label),
+    absIntFvs :: Map Label Fvs
   }
 
 $(makeFieldLabels ''AbsInt)

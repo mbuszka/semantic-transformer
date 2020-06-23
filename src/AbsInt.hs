@@ -18,6 +18,7 @@ import Polysemy.Error
 import Syntax
 import Polysemy.State
 import Util.Pretty
+import qualified Pipeline.Scope as Scope
 
 type Result = Map Label (Set Function)
 
@@ -46,6 +47,7 @@ lookup l res = case Map.lookup l res of
 
 run :: Members '[Error Err, FreshLabel, Embed IO] r => Program Term -> Sem r Result
 run program = do
+  Scope.Result {free = absIntFvs} <- Scope.analyseProgram program
   let absIntGlobals = Map.empty
       absIntTerms = Map.empty
   evalState AbsInt {..} do

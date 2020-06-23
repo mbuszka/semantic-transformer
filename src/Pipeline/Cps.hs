@@ -65,7 +65,8 @@ transformAtomic txt tm = case termF tm of
         if b'
           then do
             v <- freshVar "x"
-            let as = defaultFunAnnot {funDefunName = Just (MkTp "Halt"), funDefunApply = Just (MkVar "continue")}
+            h <- freshTag "Halt"
+            let as = defaultFunAnnot {funDefunName = Just h, funDefunApply = Just (MkVar "continue")}
             k <- mkTerm' =<< Abs as [v] <$> mkTerm' (Var v)
             pure tm {termF = App f (ts <> [k])}
           else throwLabeled (termLabel tm) $ "Cps: Application of both cps and non-cps functions"

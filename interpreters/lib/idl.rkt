@@ -110,22 +110,25 @@
      #:with ((struct-def contract-def) ...) #'((~? elems.struct-def) ...)
      #:with c-name (format-id #'name "~a/c" #'name)
      #'(begin
-         (define c-name (flat-named-contract 'name (or/c elems.contract ...)))
+         ; (define c-name (flat-named-contract 'name (or/c elems.contract ...)))
          struct-def ...
-         contract-def ...)]))
+         ; contract-def ...
+       )]))
 
 (define-syntax (def-struct stx)
   (syntax-parse stx
     [(_ struct:struct-def)
      #:with (s c) #'struct.struct-def
-     #'(begin s c)]))
+     ; #'(begin s c)]))
+     #'s]))
 
 (define-syntax (def stx)
   (syntax-parse stx
     [(_ name:id _:kw-arg ... (arg:typed-arg ...) . body:statements)
      #:with contract #'(-> arg.contract ... any/c)
-     #'(begin
-         (define/contract (name arg.name ...) contract body.res))]))
+     ; #'(begin
+     ;    (define/contract (name arg.name ...) contract body.res))]))
+     #'(define (name arg.name ...) body.res)]))
 
 ;(define-syntax (fun stx)
 ;  (syntax-parse stx
