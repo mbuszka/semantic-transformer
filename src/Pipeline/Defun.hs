@@ -198,8 +198,13 @@ transformL label tm = case tm of
     fvs <- getFvs label
     case fvs Map.! v of
       RefGlobal -> do
-        tag <- getGlobal v
-        mkTerm' . Cons $ Stx.Record tag []
+        globals <- gets (defunDefinitions)
+        let DefFun {funAnnot = FunAnnot {funDoDefun}} = globals Map.! v
+        if funDoDefun
+          then do
+            tag <- getGlobal v
+            mkTerm' . Cons $ Stx.Record tag []
+          else pure $ Term {termLabel = label, termF = tm, termLoc = Nothing}
       RefPrimOp -> do
         tag <- getPrim v
         mkTerm' . Cons $ Stx.Record tag []
