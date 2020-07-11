@@ -14,7 +14,7 @@
   {Nil}
   {Cons Any Env})
 
-(def nth ([Env env] [Integer n])
+(def nth #:atomic ([Env env] [Integer n])
   (match env
     ({Nil} (error "empty env"))
     ({Cons v env}

@@ -9,45 +9,36 @@
   {App Term Term}
   {Abs Term})
 
-(def-data Env
-  {Nil}
-  {Cons Any Env})
+(def-struct {Level Integer})
+(def-struct {Fun Any})
 
-(def-data Dom
-  {Fun Any}
-  {Level Integer}
-  {DApp Dom Dom})
-
-(def nth ([Env env] [Integer n])
-  (match env
-    ({Nil} (error "empty env"))
-    ({Cons v env}
-     (match n
-       (0 v)
-       (_ (nth env (- n 1)))))))
+(def cons #:atomic (val env)
+  (fun #:atomic #:no-defun (n)
+    (match n
+      (0 val)
+      (_ (env (- n 1))))))
 
 (def reify (ceil val)
   (match val
     ({Fun f}
       {Abs (reify (+ ceil 1) (f {Level ceil}))})
     ({Level k} {Var (- ceil (+ k 1))})
-    ({DApp f arg} {App (reify ceil f) (reify ceil arg)})
-  ))
+    ({App f arg} {App (reify ceil f) (reify ceil arg)})))
 
 (def apply (f arg)
   (match f
     ({Fun f} (f arg))
-    (_ {DApp f arg})
-    ))
+    (_ {App f arg})))
 
-(def eval ([Term expr] [Env env])
+(def eval (expr env)
   (match expr
-    ({Var n} (nth env n))
+    ({Var n} (env n))
     ({App f arg} (apply (eval f env) (eval arg env)))
-    ({Abs body} {Fun (fun #:name Closure (x) (eval body {Cons x env}))})
-  ))
+    ({Abs body} {Fun (fun #:name Closure (x) (eval body (cons x env)))})))
 
-(def run (term) (reify 0 (eval term {Nil})))
+(def run (term)
+  (reify 0 
+    (eval term (fun #:atomic #:no-defun (x) (error "empty env")))))
 
 (def main ([Term term]) (run term))
 
