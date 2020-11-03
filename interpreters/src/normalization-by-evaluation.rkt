@@ -54,10 +54,24 @@
   (check-equal? (main (App (Abs {Var 0}) id)) id)
   (check-equal? (main (Abs {App id id})) {Abs id})
   
-  ; (define-syntax (app* stx)
-  ;   (syntax-parse stx
-  ;     [(_ f v) #'(App f v)]
-  ;     [(_ f v vs ...+) #'(app* (App f v) vs ...)]))
+  (define-syntax (app* stx)
+    (syntax-parse stx
+      [(_ f v) #'(App f v)]
+      [(_ f v vs ...+) #'(app* (App f v) vs ...)]))
+
+  (define (num-body n)
+    (if (= n 0) {Var 0} {App {Var 1} (num-body (- n 1))}))
+
+  (define (num n)
+    {Abs {Abs (num-body n)}})
+
+  (define (add n m) {Abs {Abs (app* n {Var 1} (app* m {Var 1} {Var 0}))}})
+
+  (define (mul n m) {Abs {Abs (app* n (app* m {Var 1}) {Var 0})}})
+
+  (check-equal? (main (add (num 3) (num 4))) (num 7))
+
+  (check-equal? (main (mul (num 3) (num 4))) (num 12))
 
   ; (let*
   ;   ([omega {App {Abs {App {Var 0} {Var 0}}} {Abs {App {Var 0} {Var 0}}}}]
