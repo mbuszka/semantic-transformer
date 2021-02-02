@@ -14,6 +14,7 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import Control.Monad.State.Strict
 import Common
 import Optics
+import Import
 
 run :: FilePath -> Text -> Either Err (SrcProgram, Set Text)
 run fileName program = case flip runState Set.empty $ runParserT parseProgram fileName program of

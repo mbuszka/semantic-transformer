@@ -5,6 +5,7 @@ module Util.Pretty
     nested',
     prettyBody,
     prettyMap,
+    prettyMap',
     rows,
     -- reexports
     (<+>),
@@ -16,6 +17,7 @@ module Util.Pretty
   )
 where
 
+import Import
 import qualified Data.Text as Text
 import qualified Data.Map as Map
 import Data.Text.Prettyprint.Doc
@@ -49,4 +51,10 @@ prettyMap :: (Pretty k, Pretty v) => Map k v -> Doc ann
 prettyMap =
   aligned'
     . fmap (\case (l, t) -> pretty l <+> "->" <+> pretty t)
+    . Map.toList
+
+prettyMap' :: (Pretty k) => Map k (Doc ann) -> Doc ann
+prettyMap' =
+  aligned'
+    . fmap (\case (l, t) -> pretty l <+> "->" <+> nested 2 t)
     . Map.toList

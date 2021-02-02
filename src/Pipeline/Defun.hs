@@ -19,6 +19,7 @@ import Polysemy.Error
 import Polysemy.State
 import Syntax as Stx
 import Util.Pretty
+import Import
 
 data Defun = Defun
   { defunTerms :: Map Label Term,
@@ -34,11 +35,6 @@ data Defun = Defun
 $(makeFieldLabels ''Defun)
 
 type Effs r = Members [FreshVar, FreshLabel, State Defun, Error Err, Embed IO] r
-
-lookupLabel :: Effs r => Label -> Text -> Map Label a -> Sem r a
-lookupLabel l err m = case Map.lookup l m of
-  Just v -> pure v
-  Nothing -> throwLabeled l err
 
 lookup :: (Ord k, Effs r) => k -> Text -> Map k a -> Sem r a
 lookup k err m = case Map.lookup k m of
@@ -75,7 +71,8 @@ transform ::
 transform program = do
   resCfa <- AbsInt.run program
   resScope <- Scope.analyseProgram program
-  -- embed $ pprint' $ prettyMap $ fmap toList (Scope.uses resScope)
+  -- embed $ pprint' $ prettyMap' $ fmap prettyMap (Scope.free resScope)
+  -- embed $ pprint' $ prettyMap $ fmap toList resCfa
   let s = initState program resCfa (Scope.free resScope)
   evalState s do
     Program {..} <- traverse transform' program
@@ -162,21 +159,26 @@ getGlobal v = do
 transform' :: Effs r => Term -> Sem r Term
 transform' tm = case termF tm of
   App f xs -> do
+    -- embed $ pprint' $ "transforming application:" <+> pretty (termLabel f)
     fvs <- getFvs (termLabel f)
     xs' <- traverse transform' xs
     case termF f of
       Var v
-        | not $ Scope.isLocal $ fvs Map.! v ->
+        | not $ Scope.isLocal $ fvs Map.! v -> do
+          -- embed . pprint' $ "applying not local variable:" <+> pretty v
           mkTerm' =<< App <$> (mkTerm' $ Var v) <*> pure xs'
       _ -> do
+        -- embed . pprint' $ "applying something else"
         f' <- transform' f
         fs <- getFuns (termLabel f)
+        -- embed . pprint' $ "Used funs:" <+> aligned (toList fs)
         nd <- all noDefun fs
         dd <- all doDefun fs
-        if  | nd -> mkTerm' $ App f' xs'
-            | dd -> do
+        -- embed . pprint' $ "No defun:" <+> pretty nd <+> "Do defun:" <+> pretty dd
+        if  | dd -> do
               apply <- getApply fs
               mkTerm' =<< App <$> (mkTerm' . Var $ apply) <*> pure (f' : xs')
+            | nd -> mkTerm' $ App f' xs'
             | otherwise ->
               throwLabeled (termLabel f) "Defun: Inconsitent defunctionalization requirements of lambdas"
   t -> traverse transform' t >>= transformL (termLabel tm)
@@ -245,6 +247,10 @@ getApplyName f = case f of
 genNames :: Effs r => [Function] -> Sem r [Var]
 genNames fs = do
   let aux (Lambda l) = getLambda l <&> \case (_, fvs, xs, _) -> [(xs, fvs)]
+      aux (Global x) = do
+        defs <- gets defunDefinitions
+        let xs = snd <$> funVars (defs Map.! x)
+        pure [(xs, [])]
       aux _ = pure []
   (usedVars, fvss) <- fmap (List.unzip . join) $ traverse aux fs
   let fvs = foldMap Set.fromList fvss

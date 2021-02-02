@@ -1,4 +1,4 @@
-module Prelude
+module Import
   ( module Control.Applicative,
     module Control.Monad,
     module Control.Monad.IO.Class,

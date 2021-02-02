@@ -2,6 +2,7 @@ module AbsInt.Interpreter (run) where
 
 import AbsInt.Types
 import Common
+import Import
 import Control.Applicative ((<|>), empty)
 import qualified Data.Map as Map
 import qualified Data.Set as Set

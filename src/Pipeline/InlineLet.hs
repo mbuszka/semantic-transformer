@@ -5,6 +5,7 @@ where
 
 import qualified Data.Map as Map
 import Syntax
+import Import
 
 type Effs r = Members '[FreshLabel] r
 

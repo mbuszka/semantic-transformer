@@ -15,6 +15,7 @@ import Polysemy.Error
 import Optics
 import Polysemy.State
 import Syntax
+import Import
 
 type Env = Map Var RefersTo
 

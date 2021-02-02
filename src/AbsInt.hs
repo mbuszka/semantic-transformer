@@ -8,6 +8,7 @@ module AbsInt
   )
 where
 
+import Import
 import qualified AbsInt.Types as T
 import AbsInt.Types (AbsInt (..), Store (..), Value)
 import AbsInt.Runner

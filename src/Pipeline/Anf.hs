@@ -4,6 +4,7 @@ module Pipeline.Anf
 where
 
 import Syntax
+import Import
 
 data Anf = Atom Term | Expr Term
 

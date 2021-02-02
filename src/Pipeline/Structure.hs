@@ -1,10 +1,10 @@
-module Pipeline.Structure
-  ( validate,
-  )
-where
+module Pipeline.Structure (
+  validate,
+) where
 
 import Common
 import qualified Data.Set as Set
+import Import
 import Polysemy.Error
 import Syntax
 import Syntax.Source
@@ -17,46 +17,46 @@ empty :: Acc k v
 empty = Acc Set.empty []
 
 data Builder t = B
-  { definitions :: Acc Var (DefFun SrcTerm),
-    datatypes :: Acc Tp DefData,
-    main :: Maybe (DefFun t),
-    structs :: Acc Tp DefStruct
+  { definitions :: Acc Var (DefFun SrcTerm)
+  , datatypes :: Acc Tp DefData
+  , main :: Maybe (DefFun t)
+  , structs :: Acc Tp DefStruct
   }
 
 validate :: forall r. Effs r => [TopLevel] -> Sem r (Program Term)
 validate topLevels = do
-  B {..} <- aux topLevels $ B empty empty Nothing empty
+  B{..} <- aux topLevels $ B empty empty Nothing empty
   case main of
     Nothing -> throwMsg "No main in file"
     Just m -> do
       let pgm =
             Program
-              { programDefinitions = values definitions,
-                programDatatypes = values datatypes,
-                programMain = m,
-                programStructs = values structs
+              { programDefinitions = values definitions
+              , programDatatypes = values datatypes
+              , programMain = m
+              , programStructs = values structs
               }
-          f SrcTerm {..} = do
+          f SrcTerm{..} = do
             termLabel <- freshLabel @r
             termF <- traverse f srcTerm
-            pure Term {termLoc = Just srcLoc, ..}
+            pure Term{termLoc = Just srcLoc, ..}
       traverse f pgm
-  where
-    aux :: [TopLevel] -> Builder SrcTerm -> Sem r (Builder SrcTerm)
-    aux [] b = pure b
-    aux (TFun _ f@DefFun {funName = MkVar "main"} : ts) B {main = Nothing, ..} =
-      aux ts B {main = Just f, ..}
-    aux (TFun l DefFun {funName = MkVar "main"} : _) B {main = Just _} =
-      throw $ Err (Just l) Nothing "Redefinition of main"
-    aux (TFun l f : ts) B {..} = do
-      definitions' <- insert funName f definitions $ Err (Just l) Nothing "Redefinition of a function"
-      aux ts B {definitions = definitions', ..}
-    aux (TData l d : ts) B {..} = do
-      datatypes' <- insert dataName d datatypes $ Err (Just l) Nothing "Redefinition of a data type"
-      aux ts B {datatypes = datatypes', ..}
-    aux (TStruct l s : ts) B {..} = do
-      structs' <- insert structName s structs $ Err (Just l) Nothing "Redefinition of a struct"
-      aux ts B {structs = structs', ..}
+ where
+  aux :: [TopLevel] -> Builder SrcTerm -> Sem r (Builder SrcTerm)
+  aux [] b = pure b
+  aux (TFun _ f@DefFun{funName = MkVar "main"} : ts) B{main = Nothing, ..} =
+    aux ts B{main = Just f, ..}
+  aux (TFun l DefFun{funName = MkVar "main"} : _) B{main = Just _} =
+    throw $ Err (Just l) Nothing "Redefinition of main"
+  aux (TFun l f : ts) B{..} = do
+    definitions' <- insert funName f definitions $ Err (Just l) Nothing "Redefinition of a function"
+    aux ts B{definitions = definitions', ..}
+  aux (TData l d : ts) B{..} = do
+    datatypes' <- insert dataName d datatypes $ Err (Just l) Nothing "Redefinition of a data type"
+    aux ts B{datatypes = datatypes', ..}
+  aux (TStruct l s : ts) B{..} = do
+    structs' <- insert structName s structs $ Err (Just l) Nothing "Redefinition of a struct"
+    aux ts B{structs = structs', ..}
 
 insert ::
   (Ord k, Member (Error Err) r) => (v -> k) -> v -> Acc k v -> Err -> Sem r (Acc k v)

@@ -2,6 +2,7 @@ module Syntax.Source where
 
 import Common
 import Syntax
+import Import
 
 data SrcTerm = SrcTerm
   { srcTerm :: TermF SrcTerm,

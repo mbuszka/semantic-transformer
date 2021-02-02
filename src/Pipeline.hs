@@ -19,6 +19,7 @@ import System.Directory
 import System.FilePath
 import System.IO (putStrLn)
 import System.Process
+import Import
 
 data Transform = Anf | Cps | Defun | Inline
   deriving (Eq, Ord)

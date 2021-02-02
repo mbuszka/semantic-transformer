@@ -5,6 +5,7 @@ module Syntax.Pretty
 where
 
 import Syntax
+import Import
 import Util.Pretty
 
 data Options = Options {addLabels :: Bool}

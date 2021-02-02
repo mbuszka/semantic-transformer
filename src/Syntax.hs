@@ -49,6 +49,7 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Optics
+import Import
 
 data Program t = Program
   { programDefinitions :: [DefFun t],
@@ -96,6 +97,11 @@ data PrimOp = Add | Sub | Mul | Div | Neg | And | Or | Not | Eq | Lt
 type Fvs = Map Var RefersTo
 
 data RefersTo = RefGlobal | RefPrimOp | RefLocal Label deriving (Eq, Ord)
+
+instance Pretty RefersTo where
+  pretty RefGlobal = "global"
+  pretty RefPrimOp = "prim-op"
+  pretty (RefLocal l) = "local:" <> pretty l
 
 data TermF t
   = Var Var

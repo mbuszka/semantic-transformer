@@ -41,7 +41,7 @@ library
     Pipeline.Scope
     Pipeline.Structure
     Parser
-    Prelude
+    Import
     Syntax
     Syntax.Source
     Syntax.Pretty
@@ -67,6 +67,7 @@ library
     RankNTypes
     RecordWildCards
     NamedFieldPuns
+    NoImplicitPrelude
     ScopedTypeVariables
     StandaloneDeriving
     TemplateHaskell
@@ -76,7 +77,7 @@ library
     TypeOperators
   
   build-depends:
-    , base-noprelude >=4.7 && <5
+    , base >=4.7 && <5
     , containers
     , directory
     , filepath

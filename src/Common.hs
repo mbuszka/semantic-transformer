@@ -9,6 +9,7 @@ where
 
 import Util.Pretty
 import Polysemy.Error
+import Import
 
 data Loc = Loc !Int !Int
 

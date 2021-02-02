@@ -2,6 +2,7 @@
 
 module AbsInt.Types where
 
+import Import
 import Common
 import qualified Data.Map as Map
 import qualified Data.Set as Set
