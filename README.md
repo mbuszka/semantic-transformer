@@ -98,11 +98,11 @@ The syntax of _IDL_ is given in the table below.
 
 |                   |     |     |
 | ---               | ---:| --- |
-| _data-def_        | ::= | `(def-data `_tp-name_ _tp-elem_ ... `)` |
+| _data-def_        | ::= | `(def-data` _tp-name_ _tp-elem_ ... `)` |
 | _tp-elem_         | ::= | _tp_ \| _record_ |
 | _record_          | ::= | `{` _tp-name_ _record-field_ ...`}` |
 | _record-field_    | ::= | _tp_ \| _var_ \| `[` _tp_ _var_ `]` |
-| _record-def_      | ::= | `(def-struct `_record_ `)` |
+| _record-def_      | ::= | `(def-struct` _record_ `)` |
 | _base-tp_         | ::= | `String` \| `Integer` \| `Boolean` |
 | _tp_              | ::= | `Any` \| _base-tp_ \| _tp-name_ |
 | _fun-def_         | ::= | `(def` _var_ _annot_ ... `(`_arg_ ...`)` _statements_ `)` |
