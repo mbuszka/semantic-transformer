@@ -3,4 +3,4 @@
 dist-newstyle
 ignore/
 **/compiled
-interpreters/out/*
+interpreters/out/*.dbg
