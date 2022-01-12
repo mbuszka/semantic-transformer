@@ -241,7 +241,7 @@ identFirst c = case c of
   '*' -> True
   '?' -> True
   '<' -> True
-  _ -> Char.isAlpha c
+  _ -> Char.isLower c
 
 identRest :: Char -> Bool
-identRest c = identFirst c || Char.isDigit c
+identRest c = identFirst c || Char.isAlphaNum c
